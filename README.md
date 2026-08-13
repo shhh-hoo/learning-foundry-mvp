@@ -2,160 +2,160 @@
 
 A deliberately thin, runnable vertical slice of Learning Foundry.
 
-The MVP proves one loop:
-
 ```text
 Teacher assigns a goal
 → each student gets a Task
-→ Foundry sends current Product State + available Capabilities to an orchestrator
-→ orchestrator returns a Capability Resolution + Activity Plan
-→ Asset Stage launches an exact ComponentAsset version in a sandboxed iframe
-→ Component reports learning events and an Attempt through Runtime Protocol v0.1
+→ Foundry sends current state + available Capabilities to an orchestrator
+→ orchestrator returns Capability Resolution + ActivityPlan
+→ Asset Stage launches an exact ComponentAsset in a sandboxed iframe
+→ Component reports events and Attempt through Runtime Protocol v0.1
 → Foundry persists the Attempt and a bounded diagnosis proposal
-→ teacher can inspect evidence and intervene
+→ teacher inspects evidence and can change the next capability resolution
 ```
 
-## Scope
-
-Current scope is intentionally small:
+## What this MVP proves
 
 - one teacher (teacher and expert are the same actor)
-- three seeded students
-- local JSON Product State behind a repository boundary
-- Capability Registry with two Web ComponentAssets
-- sandboxed iframe Asset Stage
-- Foundry Component Runtime Protocol v0.1
-- mock orchestrator by default
-- optional Dify Workflow adapter
-- no n8n
-- no school/multi-tenant model
-- no LangGraph
-- no custom LLM control plane
-- no Retry / Transfer / Retention implementation
-- no heavy migration or RLS machinery
+- multiple seeded students
+- persistent Product State behind a repository boundary
+- a Capability Registry independent of subject knowledge
+- Web ComponentAssets launched in a sandboxed iframe
+- a small `postMessage` Runtime Protocol
+- teacher `REQUIRE_CAPABILITY` / `EXCLUDE_CAPABILITY` intervention
+- mock orchestration that can be replaced by Dify
+- no n8n, LangGraph, custom LLM control plane, multi-tenant/RLS machinery, or long-term learning lifecycle yet
 
-The JSON store is a demo persistence adapter, not a long-term storage decision. It can later be replaced with Postgres/Supabase without changing the runtime protocol or orchestration contracts.
+The local JSON store is only a demo persistence adapter. It is intentionally easy to replace with Postgres/Supabase later.
 
 ## Run
 
-Requires Node.js 20+.
+Requires Node.js 20+ and no third-party packages.
 
 ```bash
 npm start
 ```
 
-Then open:
+Open `http://127.0.0.1:3000`.
 
-```text
-http://localhost:3000
-```
-
-No dependency installation is required.
-
-To reset the demo state:
+Reset demo state:
 
 ```bash
 npm run reset
 ```
 
-Run the small test suite:
+Run the small smoke checks:
 
 ```bash
 npm test
 ```
 
-## Pages
+## Demo surfaces
 
-- `/` — demo entry
-- `/teacher.html` — one-teacher / multi-student workspace
-- `/student.html?id=alice` — Alice
-- `/student.html?id=bob` — Bob
-- `/student.html?id=charlie` — Charlie
+The product is one small shell with hash-routed surfaces:
+
+- `/#teacher` — Teacher Workspace
+- `/#teacher/alice` — Alice in the teacher dashboard
+- `/#student/alice`
+- `/#student/bob`
+- `/#student/charlie`
+
+A typical walkthrough is:
+
+1. Teacher assigns one goal to all three students.
+2. Open Alice and plan her next activity → `Ratio Explorer`.
+3. Open Bob and plan his next activity → `Calculation Trainer`.
+4. Submit an Attempt inside the iframe ComponentAsset.
+5. Return to Teacher Workspace and inspect the persisted Attempt + diagnosis proposal.
+6. Require or exclude a capability, then plan the learner's next activity again.
 
 ## Component integration
 
-Learning Components are not React UI components and are not loaded by Dify.
+Learning Components are independent Web apps, not React UI components and not Dify nodes.
 
-They live as independent Web apps under `public/component-assets/` for this demo. The Capability Registry stores only their callable identity and runtime metadata:
+For the demo they live under:
+
+```text
+public/component-assets/
+  ratio-explorer/component.html
+  calculation-trainer/component.html
+```
+
+The Registry stores their callable identity and runtime metadata:
 
 ```js
 {
-  capabilityId: "ratio-explorer",
+  id: "ratio-explorer",
   version: "1.0.0",
   runtime: {
     type: "web",
-    launchUrl: "/component-assets/ratio-explorer/index.html",
+    launchUrl: "/component-assets/ratio-explorer/component.html",
     protocolVersion: "0.1"
   }
 }
 ```
 
-The Asset Stage talks to them through `window.postMessage()` using `src/runtime/protocol.mjs`.
+`public/bridge.js` owns the `COMPONENT_READY → FOUNDRY_INIT` handshake. `public/app.js` forwards subsequent Component events to Foundry Product State. Components cannot write diagnoses, teacher decisions, or learning outcomes directly.
 
-A real deployment should serve untrusted/generated ComponentAssets from a separate origin. This MVP uses sandboxed iframes on one local server to keep setup trivial.
+A real deployment should serve untrusted/generated ComponentAssets from a separate origin. Same-server sandboxed iframes are used here only to keep the MVP one-command runnable.
 
 ## Dify adapter
 
-The app runs with the local mock orchestrator by default.
+Mock orchestration is the default so the repo runs without external services.
 
-To use a Dify Workflow instead:
+To switch to a Dify Workflow:
 
 ```bash
 ORCHESTRATOR=dify \
 DIFY_BASE_URL=https://api.dify.ai \
-DIFY_API_KEY=your_server_side_workflow_key \
+DIFY_API_KEY=your_workflow_api_key \
 npm start
 ```
 
-The Dify Workflow should accept these string inputs:
+The Workflow receives three string inputs:
 
-- `context_json`
-- `capabilities_json`
-- `latest_attempt_json`
+```text
+context_json
+capabilities_json
+latest_attempt_json
+```
 
-and return either:
+It should return either `resolution` + `plan` output variables, or a `result` output containing:
 
 ```json
 {
-  "resolution": { "...": "CapabilityResolution" },
-  "plan": { "...": "ActivityPlan" }
+  "resolution": {},
+  "plan": {}
 }
 ```
 
-as workflow output variables, or a `result` output containing that JSON.
-
-Dify is only the replaceable AI orchestration implementation. Product State, Registry state, teacher decisions, Component execution, Attempts, and runtime events stay in Foundry.
+Dify is only a replaceable orchestration implementation. Foundry still owns Product State, the Registry, runtime sessions, Attempts, and teacher decisions.
 
 ## Repository map
 
 ```text
-server.mjs
+server.mjs                  HTTP + Product API
 src/
-  capabilities/registry.mjs
-  orchestration/
-    index.mjs
-    mock.mjs
-    dify.mjs
-  product-state/store.mjs
-  runtime/protocol.mjs
+  product-state/store.mjs   persistence boundary
+  capabilities/registry.mjs Capability Registry
+  orchestrator/mock.mjs     local runnable orchestration
+  orchestrator/dify.mjs     Dify Workflow adapter
+  runtime/protocol.mjs      Runtime Protocol v0.1
 public/
-  teacher.html / teacher.js
-  student.html / student.js
-  component-assets/
-    ratio-explorer/
-    calculation-trainer/
-data/
-  seed.json
-scripts/
-  reset-state.mjs
-test/
+  demo.html                 single-page shell
+  app.js                    Teacher + Learner surfaces
+  bridge.js                 iframe runtime bridge
+  component-assets/         independent learning Web apps
+data/seed.json              demo Product State seed
+checks.mjs                  intentionally small smoke gate
 ```
 
-## What comes next
+## Next product work
 
-Do not expand infrastructure yet. The next useful product work is:
+Keep the sequence narrow:
 
 1. connect a real Dify learner-orchestration workflow;
 2. replace one demo ComponentAsset with a real existing learning app;
-3. implement one teacher intervention that changes the next resolution;
-4. add one `NO_MATCH → preview → confirm → register → learner uses it` capability-supply path.
+3. make Attempt/context input materially change the Dify decision;
+4. add one `NO_MATCH → preview → confirm → register → learner uses it` supply path.
+
+Do not expand school tenancy, analytics, Retry/Transfer/Retention, or optimization until this loop feels good as a product demo.
