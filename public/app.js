@@ -105,7 +105,7 @@ window.addEventListener("message", async (event) => {
   }
 
   await request("/api/runtime-messages", { method: "POST", body: JSON.stringify({ message }) });
-  if (["ATTEMPT_SUBMITTED", "COMPONENT_COMPLETED", "COMPONENT_ERROR"].includes(message.type)) await route();
+  if (["COMPONENT_COMPLETED", "COMPONENT_ERROR"].includes(message.type)) await route();
 });
 
 async function renderStudent(studentId) {
