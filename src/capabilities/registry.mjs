@@ -6,7 +6,7 @@ export const CAPABILITIES = [
     purpose: "Interactive conceptual proportional-reasoning task.",
     tags: ["conceptual", "ratio"],
     availability: "AVAILABLE",
-    runtime: { type: "web", launchUrl: "/component-assets/ratio-explorer/index.html", protocolVersion: "0.1" }
+    runtime: { type: "web", launchUrl: "/component-assets/ratio-explorer/component.html", protocolVersion: "0.1" }
   },
   {
     id: "calculation-trainer",
@@ -15,7 +15,7 @@ export const CAPABILITIES = [
     purpose: "Interactive numerical proportional-reasoning practice.",
     tags: ["procedural", "ratio"],
     availability: "AVAILABLE",
-    runtime: { type: "web", launchUrl: "/component-assets/calculation-trainer/index.html", protocolVersion: "0.1" }
+    runtime: { type: "web", launchUrl: "/component-assets/calculation-trainer/component.html", protocolVersion: "0.1" }
   }
 ];
 
