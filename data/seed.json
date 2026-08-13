@@ -1,0 +1,14 @@
+{
+  "teacher": { "id": "teacher-1", "name": "Demo Teacher" },
+  "students": [
+    { "id": "alice", "name": "Alice", "demoNeed": "conceptual" },
+    { "id": "bob", "name": "Bob", "demoNeed": "procedural" },
+    { "id": "charlie", "name": "Charlie", "demoNeed": "mixed" }
+  ],
+  "tasks": [],
+  "runtimeSessions": [],
+  "attempts": [],
+  "learningEvents": [],
+  "diagnosisProposals": [],
+  "teacherDecisions": []
+}
