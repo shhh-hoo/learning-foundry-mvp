@@ -39,33 +39,30 @@ export function FoundryChatProvider({ studentId, taskId, conversationEvents, chi
     const text = textPart?.text?.trim();
     if (!text) return;
 
-    const optimisticUser = {
-      id: `optimistic-${crypto.randomUUID()}`,
-      role: "user",
-      content: text,
-      createdAt: new Date(),
-      metadata: { isOptimistic: true }
-    };
-    setMessages((current) => [...current, optimisticUser]);
+    const optimisticId = `optimistic-${crypto.randomUUID()}`;
+    setMessages((current) => [
+      ...current,
+      {
+        id: optimisticId,
+        role: "user",
+        content: text,
+        createdAt: new Date(),
+        metadata: { isOptimistic: true }
+      }
+    ]);
 
     try {
-      const result = await sendLearnerTurn({
+      await sendLearnerTurn({
         studentId,
         taskId,
         message: text,
         trigger: "CHAT_MESSAGE"
       });
-
-      if (result.assistantEvent) {
-        setMessages((current) => [
-          ...current.filter((item) => item.id !== optimisticUser.id),
-          { ...optimisticUser, metadata: undefined },
-          toThreadMessage(result.assistantEvent)
-        ]);
-      }
+      // Foundry owns the authoritative learner + assistant events.
+      // Refetch them together rather than maintaining a second chat history here.
       await refreshProductState();
     } catch (error) {
-      setMessages((current) => current.filter((item) => item.id !== optimisticUser.id));
+      setMessages((current) => current.filter((item) => item.id !== optimisticId));
       throw error;
     }
   }, [refreshProductState, studentId, taskId]);
