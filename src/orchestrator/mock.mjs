@@ -8,11 +8,11 @@ function otherCapability(capabilities, capabilityId) {
 }
 
 function messageSuggestsVisualSupport(message) {
-  return /(visual|picture|see|show|draw|imagine|meaning|understand why|what it means|看不懂|看一下|图|直观|什么意思)/i.test(message);
+  return /(visual|picture|see|show|draw|imagine|meaning|means|understand why|don'?t understand|what it means|看不懂|不理解|看一下|图|直观|什么意思)/i.test(message);
 }
 
 function messageSuggestsPractice(message) {
-  return /(practice|calculate|calculation|question|problem|try one|numbers|练习|计算|做题|试一道)/i.test(message);
+  return /(want|need|can we|let'?s|give me|try|more)\s+.{0,20}(practice|calculate|calculation|question|problem|numbers)|(practice|question|problem|try one|练习|计算|做题|试一道)/i.test(message);
 }
 
 export async function runMockOrchestration({
@@ -93,6 +93,7 @@ export async function runMockOrchestration({
     const visual = capabilities.find((item) => item.id === "ratio-explorer");
     const practice = capabilities.find((item) => item.id === "calculation-trainer");
 
+    // The learner's stated difficulty matters more than words describing what they can already do.
     if (messageSuggestsVisualSupport(message) && visual) {
       return {
         guidance: { text: "That sounds more like a meaning problem than a formula problem. Let's make the relationship visible first." },
