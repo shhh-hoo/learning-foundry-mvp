@@ -15,6 +15,8 @@ function runtimeMessage(runtimeSessionId, type, payload = {}) {
 
 export function RuntimeFrame({ session, capability, onTerminal }) {
   const frameRef = useRef(null);
+  const terminalRef = useRef(onTerminal);
+  terminalRef.current = onTerminal;
 
   useEffect(() => {
     async function handleMessage(event) {
@@ -42,13 +44,13 @@ export function RuntimeFrame({ session, capability, onTerminal }) {
       });
 
       if (["COMPONENT_COMPLETED", "COMPONENT_ERROR"].includes(message.type)) {
-        onTerminal?.(result);
+        terminalRef.current?.(result);
       }
     }
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [session, capability, onTerminal]);
+  }, [session.id, session.parameters, session.stateSnapshot, capability.id, capability.version]);
 
   return (
     <iframe
