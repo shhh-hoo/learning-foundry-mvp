@@ -1,4 +1,4 @@
-const ACTIVE_RUNTIME_STATUSES = new Set(["LOADING", "RUNNING"]);
+const ACTIVE_RUNTIME_STATUSES = new Set(["READY", "LOADING", "RUNNING"]);
 
 export function eligibleCapabilitiesForTask(task, capabilities) {
   const excluded = new Set(task.constraints?.excludeCapabilityIds ?? []);
@@ -11,9 +11,7 @@ export function eligibleCapabilitiesForTask(task, capabilities) {
 export function commitActionProposal({ proposal, eligibleCapabilities, activeRuntime }) {
   const action = proposal?.actionProposal ?? { kind: "CHAT_ONLY" };
 
-  if (action.kind === "CHAT_ONLY") {
-    return { kind: "NONE" };
-  }
+  if (action.kind === "CHAT_ONLY") return { kind: "NONE" };
 
   if (action.kind === "WAIT_FOR_TEACHER") {
     return { kind: "WAIT_FOR_TEACHER", reason: action.reason ?? "Teacher review is required." };
@@ -23,15 +21,13 @@ export function commitActionProposal({ proposal, eligibleCapabilities, activeRun
     return { kind: "NO_MATCH", reason: action.reason ?? "No suitable capability is currently available." };
   }
 
-  if (action.kind !== "LAUNCH_CAPABILITY") {
-    return { kind: "NONE" };
-  }
+  if (action.kind !== "LAUNCH_CAPABILITY") return { kind: "NONE" };
 
   if (activeRuntime && ACTIVE_RUNTIME_STATUSES.has(activeRuntime.status)) {
     return {
       kind: "CONTINUE_ACTIVE",
       runtimeSessionId: activeRuntime.id,
-      reason: "An unfinished activity remains active. Chat may continue without replacing it."
+      reason: "Keep the current offered or active learning activity."
     };
   }
 
@@ -39,7 +35,7 @@ export function commitActionProposal({ proposal, eligibleCapabilities, activeRun
   if (!capability) {
     return {
       kind: "NO_MATCH",
-      reason: "The proposed capability is not currently eligible under Registry availability and teacher policy."
+      reason: "The suggested activity is not currently available under teacher policy."
     };
   }
 
