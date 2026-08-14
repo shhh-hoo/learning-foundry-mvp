@@ -3,6 +3,8 @@ import { listAvailableCapabilities } from "../capabilities/registry.mjs";
 import { runOrchestration } from "../orchestrator/index.mjs";
 import { commitActionProposal, eligibleCapabilitiesForTask } from "./action-gate.mjs";
 
+const ACTIVE_RUNTIME_STATUSES = new Set(["READY", "LOADING", "RUNNING"]);
+
 function findTask(state, taskId) {
   return state.tasks.find((task) => task.id === taskId) ?? null;
 }
@@ -55,13 +57,10 @@ export async function executeLearnerTurn(state, { taskId, trigger, userMessage =
     : null;
 
   const recentRuntimeEvents = currentRuntime
-    ? state.learningEvents
-        .filter((event) => event.runtimeSessionId === currentRuntime.id)
-        .slice(-8)
+    ? state.learningEvents.filter((event) => event.runtimeSessionId === currentRuntime.id).slice(-8)
     : [];
 
   const eligibleCapabilities = eligibleCapabilitiesForTask(task, listAvailableCapabilities());
-
   const proposal = await runOrchestration({
     trigger,
     student,
@@ -82,12 +81,7 @@ export async function executeLearnerTurn(state, { taskId, trigger, userMessage =
     capabilities: eligibleCapabilities
   });
 
-  const committedAction = commitActionProposal({
-    proposal,
-    eligibleCapabilities,
-    activeRuntime: currentRuntime
-  });
-
+  const committedAction = commitActionProposal({ proposal, eligibleCapabilities, activeRuntime: currentRuntime });
   const decision = {
     id: randomUUID(),
     taskId: task.id,
@@ -123,24 +117,27 @@ export async function executeLearnerTurn(state, { taskId, trigger, userMessage =
       taskId: task.id,
       capabilityId: committedAction.capabilityId,
       capabilityVersion: committedAction.capabilityVersion,
-      status: "LOADING",
+      status: "READY",
       parameters: committedAction.parameters ?? {},
       stateSnapshot: null,
       createdAt: new Date().toISOString()
     };
     state.runtimeSessions.push(runtimeSession);
     task.currentRuntimeSessionId = runtimeSession.id;
-    task.learnerState = "ACTIVITY_ACTIVE";
+    task.learnerState = "ACTIVITY_READY";
   } else if (committedAction.kind === "CONTINUE_ACTIVE") {
-    task.learnerState = "ACTIVITY_ACTIVE";
+    task.learnerState = currentRuntime?.status === "READY" ? "ACTIVITY_READY" : "ACTIVITY_ACTIVE";
   } else if (committedAction.kind === "WAIT_FOR_TEACHER") {
+    if (!currentRuntime || !ACTIVE_RUNTIME_STATUSES.has(currentRuntime.status)) task.currentRuntimeSessionId = null;
     task.learnerState = "WAITING_FOR_TEACHER";
   } else if (committedAction.kind === "NO_MATCH") {
+    if (!currentRuntime || !ACTIVE_RUNTIME_STATUSES.has(currentRuntime.status)) task.currentRuntimeSessionId = null;
     task.learnerState = "NO_MATCH";
+  } else if (currentRuntime && ACTIVE_RUNTIME_STATUSES.has(currentRuntime.status)) {
+    task.learnerState = currentRuntime.status === "READY" ? "ACTIVITY_READY" : "ACTIVITY_ACTIVE";
   } else {
-    task.learnerState = currentRuntime && ["LOADING", "RUNNING"].includes(currentRuntime.status)
-      ? "ACTIVITY_ACTIVE"
-      : "GUIDANCE";
+    task.currentRuntimeSessionId = null;
+    task.learnerState = "GUIDANCE";
   }
 
   return {
