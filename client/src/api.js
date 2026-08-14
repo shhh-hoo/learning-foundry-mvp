@@ -26,3 +26,10 @@ export function sendLearnerTurn({ studentId, taskId, message = "", trigger }) {
     body: JSON.stringify({ studentId, taskId, message, trigger })
   });
 }
+
+export function startRuntime({ taskId, runtimeSessionId }) {
+  return api("/api/runtime-start", {
+    method: "POST",
+    body: JSON.stringify({ taskId, runtimeSessionId })
+  });
+}
