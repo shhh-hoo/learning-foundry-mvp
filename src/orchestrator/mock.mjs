@@ -8,11 +8,11 @@ function otherCapability(capabilities, capabilityId) {
 }
 
 function messageSuggestsVisualSupport(message) {
-  return /(visual|picture|see|show|draw|imagine|看不懂|看一下|图|直观)/i.test(message);
+  return /(visual|picture|see|show|draw|imagine|meaning|understand why|what it means|看不懂|看一下|图|直观|什么意思)/i.test(message);
 }
 
 function messageSuggestsPractice(message) {
-  return /(practice|calculate|calculation|question|problem|try one|练习|计算|做题|试一道)/i.test(message);
+  return /(practice|calculate|calculation|question|problem|try one|numbers|练习|计算|做题|试一道)/i.test(message);
 }
 
 export async function runMockOrchestration({
@@ -26,20 +26,26 @@ export async function runMockOrchestration({
 }) {
   if (!capabilities.length) {
     return {
-      guidance: {
-        text: "I don't currently have an eligible activity for this step. I've kept your work and will not pretend that a suitable activity exists."
-      },
-      actionProposal: {
-        kind: "NO_MATCH",
-        reason: "No eligible Registry capability remains after teacher policy and availability filtering."
-      }
+      guidance: { text: "I don't have a suitable activity ready for this step yet. We can keep talking while the next step is worked out." },
+      actionProposal: { kind: "NO_MATCH", reason: "No eligible activity is currently available." }
     };
   }
 
-  if (trigger === "CHAT_MESSAGE" && activeRuntime && ["LOADING", "RUNNING"].includes(activeRuntime.status)) {
+  if (trigger === "TASK_OPENED") {
     return {
       guidance: {
-        text: "Stay with the current activity for now. Focus on what the two sides represent rather than trying to finish quickly; I can clarify the task without replacing it."
+        text: "Before we start, what feels hardest about ratio questions right now: understanding what the relationship means, or doing the calculation?"
+      },
+      actionProposal: { kind: "CHAT_ONLY" }
+    };
+  }
+
+  if (trigger === "CHAT_MESSAGE" && activeRuntime && ["READY", "LOADING", "RUNNING"].includes(activeRuntime.status)) {
+    return {
+      guidance: {
+        text: activeRuntime.status === "READY"
+          ? "That activity is still ready when you want it. If you tell me what feels unclear, I can help before you start."
+          : "Stay with this activity for now. Tell me what part is confusing and I'll help without taking you out of it."
       },
       actionProposal: { kind: "CHAT_ONLY" }
     };
@@ -50,20 +56,20 @@ export async function runMockOrchestration({
       const alternative = otherCapability(capabilities, latestAttempt.capabilityId) ?? pickPreferredCapability(student, capabilities);
       return {
         guidance: {
-          text: "I've saved that attempt. The last activity exposed a mismatch, so let's try the same goal through a different kind of activity rather than repeating the same interaction."
+          text: "Your work is saved. That attempt suggests a different kind of practice may help, so I have one short next activity ready for you."
         },
         actionProposal: {
           kind: "LAUNCH_CAPABILITY",
           capabilityId: alternative.id,
           parameters: { goal: task.goal },
-          reason: "Switch modality after a completed unsuccessful attempt."
+          reason: "A different representation may be more useful after the completed attempt."
         }
       };
     }
 
     return {
       guidance: {
-        text: "Your work is saved. Before moving on, explain in your own words what stayed proportional in that activity."
+        text: "Your work is saved. Before we move on, explain in one sentence what stayed proportional in that activity."
       },
       actionProposal: { kind: "CHAT_ONLY" }
     };
@@ -72,14 +78,12 @@ export async function runMockOrchestration({
   if (trigger === "TEACHER_INTERVENTION") {
     const selected = pickPreferredCapability(student, capabilities);
     return {
-      guidance: {
-        text: "Your teacher changed the activity policy for this task. I'll use that constraint for the next step."
-      },
+      guidance: { text: "Your teacher adjusted the next step for this task. I have an activity ready when you want to continue." },
       actionProposal: {
         kind: "LAUNCH_CAPABILITY",
         capabilityId: selected.id,
         parameters: { goal: task.goal },
-        reason: "Apply the latest teacher capability policy."
+        reason: "This activity follows the teacher's latest guidance for the task."
       }
     };
   }
@@ -91,52 +95,44 @@ export async function runMockOrchestration({
 
     if (messageSuggestsVisualSupport(message) && visual) {
       return {
-        guidance: {
-          text: "Let's make the relationship visible instead of adding more explanation. Try this short explorer; I'll still be here if you need help while using it."
-        },
+        guidance: { text: "That sounds more like a meaning problem than a formula problem. Let's make the relationship visible first." },
         actionProposal: {
           kind: "LAUNCH_CAPABILITY",
           capabilityId: visual.id,
           parameters: { goal: task.goal },
-          reason: "Learner explicitly requested visual or concrete support."
+          reason: "You said the relationship itself is hard to picture or explain."
         }
       };
     }
 
     if (messageSuggestsPractice(message) && practice) {
       return {
-        guidance: {
-          text: "Let's test that understanding with a short calculation rather than another explanation."
-        },
+        guidance: { text: "Let's try one short calculation and use it to see exactly where the setup becomes difficult." },
         actionProposal: {
           kind: "LAUNCH_CAPABILITY",
           capabilityId: practice.id,
           parameters: { goal: task.goal },
-          reason: "Learner explicitly requested practice."
+          reason: "You asked to work through the calculation with practice."
         }
       };
     }
 
+    const selected = pickPreferredCapability(student, capabilities);
     return {
       guidance: {
-        text: "The key question is which quantity you already know and which quantity you are trying to find. Tell me those two sides first, and we'll decide whether you need an activity or just a clearer explanation."
+        text: "Thanks — I want to check that with something concrete rather than keep explaining in the abstract. I have a short activity you can try when you're ready."
       },
-      actionProposal: { kind: "CHAT_ONLY" }
+      actionProposal: {
+        kind: "LAUNCH_CAPABILITY",
+        capabilityId: selected.id,
+        parameters: { goal: task.goal },
+        reason: "A short interactive check can make the learner's current understanding more concrete."
+      }
     };
   }
 
-  const selected = pickPreferredCapability(student, capabilities);
   return {
-    guidance: {
-      text: student.demoNeed === "procedural"
-        ? "Let's start by trying one short calculation so I can see how you set up the ratio."
-        : "Let's start by making the proportional relationship visible. You can ask me for help while the activity is open."
-    },
-    actionProposal: {
-      kind: "LAUNCH_CAPABILITY",
-      capabilityId: selected.id,
-      parameters: { goal: task.goal },
-      reason: "Seeded opening route for the Phase 1 learner-workspace demo."
-    }
+    guidance: { text: "Tell me what feels unclear and we'll decide the next useful step together." },
+    actionProposal: { kind: "CHAT_ONLY" }
   };
 }
