@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { readState, mutateState } from "./src/product-state/store.mjs";
 import { getCapability, listAvailableCapabilities } from "./src/capabilities/registry.mjs";
-import { runOrchestration } from "./src/orchestrator/index.mjs";
+import { executeLearnerTurn } from "./src/learning/learner-turn.mjs";
 import { isComponentMessage } from "./src/runtime/protocol.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)));
@@ -38,6 +38,16 @@ async function readJson(req) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+function ensureCollections(state) {
+  state.conversationEvents ??= [];
+  state.orchestrationDecisions ??= [];
+  state.runtimeSessions ??= [];
+  state.attempts ??= [];
+  state.learningEvents ??= [];
+  state.diagnosisProposals ??= [];
+  state.teacherDecisions ??= [];
+}
+
 function findTask(state, taskId) {
   return state.tasks.find((task) => task.id === taskId) ?? null;
 }
@@ -47,19 +57,27 @@ function findStudent(state, studentId) {
 }
 
 function studentView(state, studentId) {
+  ensureCollections(state);
   const student = findStudent(state, studentId);
   if (!student) return null;
-  const tasks = state.tasks.filter((task) => task.studentId === studentId);
-  const attempts = state.attempts.filter((attempt) => attempt.studentId === studentId);
-  const sessions = state.runtimeSessions.filter((session) => session.studentId === studentId);
-  const diagnosisProposals = state.diagnosisProposals.filter((item) => item.studentId === studentId);
-  const decisions = state.teacherDecisions.filter((item) => item.studentId === studentId);
-  return { student, tasks, attempts, sessions, diagnosisProposals, decisions };
+  const taskIds = new Set(state.tasks.filter((task) => task.studentId === studentId).map((task) => task.id));
+  return {
+    student,
+    tasks: state.tasks.filter((task) => task.studentId === studentId),
+    conversationEvents: state.conversationEvents.filter((item) => taskIds.has(item.taskId)),
+    orchestrationDecisions: state.orchestrationDecisions.filter((item) => taskIds.has(item.taskId)),
+    attempts: state.attempts.filter((attempt) => attempt.studentId === studentId),
+    sessions: state.runtimeSessions.filter((session) => session.studentId === studentId),
+    learningEvents: state.learningEvents.filter((event) => event.studentId === studentId),
+    diagnosisProposals: state.diagnosisProposals.filter((item) => item.studentId === studentId),
+    decisions: state.teacherDecisions.filter((item) => item.studentId === studentId)
+  };
 }
 
 async function api(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/state") {
     const state = await readState();
+    ensureCollections(state);
     return sendJson(res, 200, {
       ...state,
       capabilities: listAvailableCapabilities(),
@@ -79,6 +97,7 @@ async function api(req, res, url) {
     if (!goal) return sendJson(res, 400, { error: "goal is required" });
 
     const created = await mutateState((state) => {
+      ensureCollections(state);
       const selectedIds = Array.isArray(input.studentIds) && input.studentIds.length
         ? input.studentIds
         : state.students.map((student) => student.id);
@@ -89,9 +108,13 @@ async function api(req, res, url) {
           id: randomUUID(),
           studentId,
           goal,
+          teacherInstruction: String(input.teacherInstruction ?? "").trim(),
           status: "OPEN",
+          learnerState: "NOT_STARTED",
           createdAt: now,
           constraints: { requireCapabilityId: null, excludeCapabilityIds: [] },
+          currentDecisionId: null,
+          currentRuntimeSessionId: null,
           currentResolution: null,
           currentPlan: null
         };
@@ -103,48 +126,42 @@ async function api(req, res, url) {
     return sendJson(res, 201, { tasks: created });
   }
 
+  if (req.method === "POST" && url.pathname === "/api/chat") {
+    const input = await readJson(req);
+    const message = String(input.message ?? "").trim();
+    const trigger = String(input.trigger ?? (message ? "CHAT_MESSAGE" : "TASK_OPENED"));
+    const allowedTriggers = new Set(["TASK_OPENED", "CHAT_MESSAGE", "LEARNER_REQUESTED_SWITCH"]);
+    if (!allowedTriggers.has(trigger)) return sendJson(res, 400, { error: "Unsupported learner-turn trigger" });
+    if (trigger === "CHAT_MESSAGE" && !message) return sendJson(res, 400, { error: "message is required" });
+
+    try {
+      const result = await mutateState(async (state) => {
+        ensureCollections(state);
+        const task = findTask(state, input.taskId);
+        if (!task) throw new Error("Task not found");
+        if (input.studentId && task.studentId !== input.studentId) throw new Error("Task does not belong to this student");
+        return executeLearnerTurn(state, {
+          taskId: task.id,
+          trigger,
+          userMessage: message
+        });
+      });
+      return sendJson(res, 200, result);
+    } catch (error) {
+      return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  // Temporary debug endpoint kept during Phase 1 migration. Normal learner UX uses /api/chat.
   if (req.method === "POST" && url.pathname === "/api/orchestrate") {
     const input = await readJson(req);
     try {
       const result = await mutateState(async (state) => {
-        const task = findTask(state, input.taskId);
-        if (!task) throw new Error("Task not found");
-        const student = findStudent(state, task.studentId);
-        if (!student) throw new Error("Student not found");
-
-        const latestAttempt = state.attempts
-          .filter((attempt) => attempt.taskId === task.id)
-          .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0] ?? null;
-
-        const { resolution, plan } = await runOrchestration({
-          student,
-          task,
-          capabilities: listAvailableCapabilities(),
-          latestAttempt
+        ensureCollections(state);
+        return executeLearnerTurn(state, {
+          taskId: input.taskId,
+          trigger: "TASK_OPENED"
         });
-
-        task.currentResolution = resolution;
-        task.currentPlan = plan;
-
-        if (plan.status !== "READY") return { resolution, plan, capability: null, runtimeSession: null };
-
-        const capability = getCapability(plan.capabilityId, plan.capabilityVersion);
-        if (!capability) throw new Error("Orchestrator selected an unavailable capability version");
-
-        const runtimeSession = {
-          id: randomUUID(),
-          studentId: student.id,
-          taskId: task.id,
-          capabilityId: capability.id,
-          capabilityVersion: capability.version,
-          status: "LOADING",
-          parameters: plan.parameters ?? {},
-          stateSnapshot: null,
-          createdAt: new Date().toISOString()
-        };
-        state.runtimeSessions.push(runtimeSession);
-        task.currentRuntimeSessionId = runtimeSession.id;
-        return { resolution, plan, capability, runtimeSession };
       });
       return sendJson(res, 200, result);
     } catch (error) {
@@ -158,7 +175,8 @@ async function api(req, res, url) {
     if (!isComponentMessage(message)) return sendJson(res, 400, { error: "Invalid Component Runtime Protocol message" });
 
     try {
-      const result = await mutateState((state) => {
+      const result = await mutateState(async (state) => {
+        ensureCollections(state);
         const session = state.runtimeSessions.find((item) => item.id === message.runtimeSessionId);
         if (!session) throw new Error("Runtime session not found");
         const task = findTask(state, session.taskId);
@@ -177,10 +195,12 @@ async function api(req, res, url) {
         if (message.type === "COMPONENT_INITIALIZED") session.status = "RUNNING";
         if (message.type === "STATE_CHANGED") session.stateSnapshot = message.payload.state ?? null;
         if (message.type === "COMPONENT_COMPLETED") session.status = "COMPLETED";
-        if (message.type === "COMPONENT_ERROR") session.status = "FAILED";
+        if (message.type === "COMPONENT_ERROR") {
+          session.status = "FAILED";
+          task.learnerState = "RUNTIME_FAILURE";
+        }
 
         let attempt = null;
-        let diagnosisProposal = null;
         if (message.type === "ATTEMPT_SUBMITTED") {
           attempt = {
             id: randomUUID(),
@@ -196,21 +216,17 @@ async function api(req, res, url) {
             submittedAt: message.timestamp
           };
           state.attempts.push(attempt);
-          diagnosisProposal = {
-            id: randomUUID(),
-            studentId: session.studentId,
-            taskId: session.taskId,
-            attemptId: attempt.id,
-            status: "REVIEW_PENDING",
-            summary: attempt.correct === false
-              ? "The latest Attempt contains an observable mismatch. Teacher review is recommended before treating it as a diagnosis."
-              : "The latest Attempt completed successfully. This runtime fact alone is not a mastery or learning-outcome claim.",
-            createdAt: new Date().toISOString()
-          };
-          state.diagnosisProposals.push(diagnosisProposal);
         }
 
-        return { session, attempt, diagnosisProposal };
+        let nextTurn = null;
+        if (message.type === "COMPONENT_COMPLETED") {
+          nextTurn = await executeLearnerTurn(state, {
+            taskId: task.id,
+            trigger: "COMPONENT_COMPLETED"
+          });
+        }
+
+        return { session, attempt, nextTurn };
       });
       return sendJson(res, 200, result);
     } catch (error) {
@@ -221,7 +237,8 @@ async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/teacher-decisions") {
     const input = await readJson(req);
     try {
-      const decision = await mutateState((state) => {
+      const result = await mutateState(async (state) => {
+        ensureCollections(state);
         const task = findTask(state, input.taskId);
         if (!task) throw new Error("Task not found");
         const action = String(input.action ?? "");
@@ -230,6 +247,7 @@ async function api(req, res, url) {
         if (action === "REQUIRE_CAPABILITY") {
           if (!getCapability(capabilityId)) throw new Error("Capability not found");
           task.constraints.requireCapabilityId = capabilityId;
+          task.constraints.excludeCapabilityIds = (task.constraints.excludeCapabilityIds ?? []).filter((id) => id !== capabilityId);
         } else if (action === "EXCLUDE_CAPABILITY") {
           if (!getCapability(capabilityId)) throw new Error("Capability not found");
           task.constraints.excludeCapabilityIds = [...new Set([...(task.constraints.excludeCapabilityIds ?? []), capabilityId])];
@@ -240,7 +258,7 @@ async function api(req, res, url) {
           throw new Error("Unknown teacher decision");
         }
 
-        const record = {
+        const decision = {
           id: randomUUID(),
           studentId: task.studentId,
           taskId: task.id,
@@ -249,10 +267,19 @@ async function api(req, res, url) {
           rationale: String(input.rationale ?? "").trim(),
           createdAt: new Date().toISOString()
         };
-        state.teacherDecisions.push(record);
-        return record;
+        state.teacherDecisions.push(decision);
+
+        const currentRuntime = task.currentRuntimeSessionId
+          ? state.runtimeSessions.find((session) => session.id === task.currentRuntimeSessionId) ?? null
+          : null;
+        const canReplanNow = !currentRuntime || !["LOADING", "RUNNING"].includes(currentRuntime.status);
+        const nextTurn = canReplanNow && action !== "ACCEPT_DIAGNOSIS"
+          ? await executeLearnerTurn(state, { taskId: task.id, trigger: "TEACHER_INTERVENTION" })
+          : null;
+
+        return { decision, nextTurn };
       });
-      return sendJson(res, 201, { decision });
+      return sendJson(res, 201, result);
     } catch (error) {
       return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
     }
