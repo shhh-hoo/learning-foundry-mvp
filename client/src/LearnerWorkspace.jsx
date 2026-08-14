@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, loadState, loadStudent, sendLearnerTurn } from "./api.js";
+import { loadState, loadStudent, sendLearnerTurn } from "./api.js";
 import { RuntimeFrame } from "./RuntimeFrame.jsx";
 
 function latest(items, field) {

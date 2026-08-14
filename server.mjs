@@ -38,16 +38,6 @@ async function readJson(req) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-function ensureCollections(state) {
-  state.conversationEvents ??= [];
-  state.orchestrationDecisions ??= [];
-  state.runtimeSessions ??= [];
-  state.attempts ??= [];
-  state.learningEvents ??= [];
-  state.diagnosisProposals ??= [];
-  state.teacherDecisions ??= [];
-}
-
 function findTask(state, taskId) {
   return state.tasks.find((task) => task.id === taskId) ?? null;
 }
@@ -57,7 +47,6 @@ function findStudent(state, studentId) {
 }
 
 function studentView(state, studentId) {
-  ensureCollections(state);
   const student = findStudent(state, studentId);
   if (!student) return null;
   const taskIds = new Set(state.tasks.filter((task) => task.studentId === studentId).map((task) => task.id));
@@ -67,21 +56,16 @@ function studentView(state, studentId) {
     conversationEvents: state.conversationEvents.filter((item) => taskIds.has(item.taskId)),
     orchestrationDecisions: state.orchestrationDecisions.filter((item) => taskIds.has(item.taskId)),
     attempts: state.attempts.filter((attempt) => attempt.studentId === studentId),
-    sessions: state.runtimeSessions.filter((session) => session.studentId === studentId),
-    learningEvents: state.learningEvents.filter((event) => event.studentId === studentId),
-    diagnosisProposals: state.diagnosisProposals.filter((item) => item.studentId === studentId),
-    decisions: state.teacherDecisions.filter((item) => item.studentId === studentId)
+    sessions: state.runtimeSessions.filter((session) => session.studentId === studentId)
   };
 }
 
 async function api(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/state") {
     const state = await readState();
-    ensureCollections(state);
     return sendJson(res, 200, {
       ...state,
-      capabilities: listAvailableCapabilities(),
-      orchestrator: process.env.ORCHESTRATOR === "dify" ? "dify" : "mock"
+      capabilities: listAvailableCapabilities()
     });
   }
 
@@ -97,7 +81,6 @@ async function api(req, res, url) {
     if (!goal) return sendJson(res, 400, { error: "goal is required" });
 
     const created = await mutateState((state) => {
-      ensureCollections(state);
       const selectedIds = Array.isArray(input.studentIds) && input.studentIds.length
         ? input.studentIds
         : state.students.map((student) => student.id);
@@ -114,9 +97,7 @@ async function api(req, res, url) {
           createdAt: now,
           constraints: { requireCapabilityId: null, excludeCapabilityIds: [] },
           currentDecisionId: null,
-          currentRuntimeSessionId: null,
-          currentResolution: null,
-          currentPlan: null
+          currentRuntimeSessionId: null
         };
         state.tasks.push(task);
         return [task];
@@ -136,7 +117,6 @@ async function api(req, res, url) {
 
     try {
       const result = await mutateState(async (state) => {
-        ensureCollections(state);
         const task = findTask(state, input.taskId);
         if (!task) throw new Error("Task not found");
         if (input.studentId && task.studentId !== input.studentId) throw new Error("Task does not belong to this student");
@@ -152,23 +132,6 @@ async function api(req, res, url) {
     }
   }
 
-  // Temporary debug endpoint kept during Phase 1 migration. Normal learner UX uses /api/chat.
-  if (req.method === "POST" && url.pathname === "/api/orchestrate") {
-    const input = await readJson(req);
-    try {
-      const result = await mutateState(async (state) => {
-        ensureCollections(state);
-        return executeLearnerTurn(state, {
-          taskId: input.taskId,
-          trigger: "TASK_OPENED"
-        });
-      });
-      return sendJson(res, 200, result);
-    } catch (error) {
-      return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
-    }
-  }
-
   if (req.method === "POST" && url.pathname === "/api/runtime-messages") {
     const input = await readJson(req);
     const message = input.message;
@@ -176,7 +139,6 @@ async function api(req, res, url) {
 
     try {
       const result = await mutateState(async (state) => {
-        ensureCollections(state);
         const session = state.runtimeSessions.find((item) => item.id === message.runtimeSessionId);
         if (!session) throw new Error("Runtime session not found");
         const task = findTask(state, session.taskId);
@@ -218,13 +180,9 @@ async function api(req, res, url) {
           state.attempts.push(attempt);
         }
 
-        let nextTurn = null;
-        if (message.type === "COMPONENT_COMPLETED") {
-          nextTurn = await executeLearnerTurn(state, {
-            taskId: task.id,
-            trigger: "COMPONENT_COMPLETED"
-          });
-        }
+        const nextTurn = message.type === "COMPONENT_COMPLETED"
+          ? await executeLearnerTurn(state, { taskId: task.id, trigger: "COMPONENT_COMPLETED" })
+          : null;
 
         return { session, attempt, nextTurn };
       });
@@ -238,7 +196,6 @@ async function api(req, res, url) {
     const input = await readJson(req);
     try {
       const result = await mutateState(async (state) => {
-        ensureCollections(state);
         const task = findTask(state, input.taskId);
         if (!task) throw new Error("Task not found");
         const action = String(input.action ?? "");
@@ -254,7 +211,7 @@ async function api(req, res, url) {
           if (task.constraints.requireCapabilityId === capabilityId) task.constraints.requireCapabilityId = null;
         } else if (action === "CLEAR_CONSTRAINTS") {
           task.constraints = { requireCapabilityId: null, excludeCapabilityIds: [] };
-        } else if (action !== "ACCEPT_DIAGNOSIS") {
+        } else {
           throw new Error("Unknown teacher decision");
         }
 
@@ -273,7 +230,7 @@ async function api(req, res, url) {
           ? state.runtimeSessions.find((session) => session.id === task.currentRuntimeSessionId) ?? null
           : null;
         const canReplanNow = !currentRuntime || !["LOADING", "RUNNING"].includes(currentRuntime.status);
-        const nextTurn = canReplanNow && action !== "ACCEPT_DIAGNOSIS"
+        const nextTurn = canReplanNow
           ? await executeLearnerTurn(state, { taskId: task.id, trigger: "TEACHER_INTERVENTION" })
           : null;
 
@@ -289,7 +246,7 @@ async function api(req, res, url) {
 }
 
 async function serveStatic(req, res, url) {
-  const requested = url.pathname === "/" ? "/index.html" : url.pathname;
+  const requested = url.pathname === "/" ? "/app/index.html" : url.pathname;
   const safePath = normalize(decodeURIComponent(requested)).replace(/^(\.\.[/\\])+/, "");
   const filePath = join(PUBLIC_ROOT, safePath);
   if (!filePath.startsWith(PUBLIC_ROOT)) return sendJson(res, 403, { error: "Forbidden" });
@@ -324,5 +281,4 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`Learning Foundry MVP: http://127.0.0.1:${PORT}`);
-  console.log(`Orchestrator: ${process.env.ORCHESTRATOR === "dify" ? "dify" : "mock"}`);
 });

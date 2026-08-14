@@ -3,14 +3,6 @@ import { listAvailableCapabilities } from "../capabilities/registry.mjs";
 import { runOrchestration } from "../orchestrator/index.mjs";
 import { commitActionProposal, eligibleCapabilitiesForTask } from "./action-gate.mjs";
 
-function ensureCollections(state) {
-  state.conversationEvents ??= [];
-  state.orchestrationDecisions ??= [];
-  state.runtimeSessions ??= [];
-  state.learningEvents ??= [];
-  state.attempts ??= [];
-}
-
 function findTask(state, taskId) {
   return state.tasks.find((task) => task.id === taskId) ?? null;
 }
@@ -23,37 +15,7 @@ function latestBy(items, field) {
   return [...items].sort((a, b) => String(b[field] ?? "").localeCompare(String(a[field] ?? "")))[0] ?? null;
 }
 
-function compatibilityState(task, proposal, committedAction) {
-  const reason = proposal?.actionProposal?.reason ?? proposal?.guidance?.text ?? "";
-  if (committedAction.kind === "LAUNCH_ASSET") {
-    task.currentResolution = {
-      type: "SELECT",
-      selected: { id: committedAction.capabilityId, version: committedAction.capabilityVersion },
-      rationale: reason
-    };
-    task.currentPlan = {
-      status: "READY",
-      capabilityId: committedAction.capabilityId,
-      capabilityVersion: committedAction.capabilityVersion,
-      parameters: committedAction.parameters,
-      purpose: "NEXT_LEARNING_ACTIVITY"
-    };
-    return;
-  }
-
-  task.currentResolution = {
-    type: proposal?.actionProposal?.kind ?? "CHAT_ONLY",
-    rationale: reason
-  };
-  task.currentPlan = {
-    status: committedAction.kind === "NO_MATCH" ? "BLOCKED" : "GUIDANCE",
-    reason: committedAction.reason ?? null
-  };
-}
-
 export async function executeLearnerTurn(state, { taskId, trigger, userMessage = "" }) {
-  ensureCollections(state);
-
   const task = findTask(state, taskId);
   if (!task) throw new Error("Task not found");
   const student = findStudent(state, task.studentId);
@@ -63,9 +25,7 @@ export async function executeLearnerTurn(state, { taskId, trigger, userMessage =
     const alreadyOpened = state.orchestrationDecisions.some(
       (item) => item.taskId === task.id && item.trigger === "TASK_OPENED"
     );
-    if (alreadyOpened) {
-      return { skipped: true, reason: "TASK_ALREADY_OPENED" };
-    }
+    if (alreadyOpened) return { skipped: true, reason: "TASK_ALREADY_OPENED" };
   }
 
   const trimmedMessage = String(userMessage ?? "").trim();
@@ -182,8 +142,6 @@ export async function executeLearnerTurn(state, { taskId, trigger, userMessage =
       ? "ACTIVITY_ACTIVE"
       : "GUIDANCE";
   }
-
-  compatibilityState(task, proposal, committedAction);
 
   return {
     skipped: false,

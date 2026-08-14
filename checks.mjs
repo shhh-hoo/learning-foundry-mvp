@@ -24,7 +24,6 @@ const state = {
   runtimeSessions: [],
   attempts: [],
   learningEvents: [],
-  diagnosisProposals: [],
   teacherDecisions: []
 };
 

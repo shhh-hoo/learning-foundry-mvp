@@ -27,7 +27,7 @@ async function json(path, options = {}) {
 
 await resetState();
 const server = spawn(process.execPath, ["server.mjs"], {
-  env: { ...process.env, PORT: String(port), ORCHESTRATOR: "mock" },
+  env: { ...process.env, PORT: String(port) },
   stdio: "inherit"
 });
 
@@ -55,8 +55,8 @@ try {
   if (!learner.conversationEvents?.some((item) => item.role === "ASSISTANT")) throw new Error("Assistant guidance was not persisted");
   if (!learner.sessions?.length) throw new Error("Runtime session was not persisted");
 
-  const appResponse = await fetch(`${baseUrl}/app/index.html`);
-  if (!appResponse.ok || !(await appResponse.text()).includes("Learning Foundry MVP")) throw new Error("React app build is not being served");
+  const appResponse = await fetch(`${baseUrl}/`);
+  if (!appResponse.ok || !(await appResponse.text()).includes("Learning Foundry MVP")) throw new Error("React app build is not being served at root");
 
   const componentResponse = await fetch(`${baseUrl}/component-assets/ratio-explorer/component.html`);
   if (!componentResponse.ok) throw new Error("ComponentAsset is not being served");
