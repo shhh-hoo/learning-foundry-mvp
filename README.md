@@ -202,7 +202,7 @@ npm test
 npm run smoke
 ```
 
-GitHub Actions also installs dependencies, builds the React UI, syntax-checks the core backend files, runs the learner-flow checks and runs a real HTTP smoke through:
+GitHub Actions installs dependencies, builds the React UI, syntax-checks the core backend files, runs the learner-flow checks and runs a real HTTP smoke through:
 
 ```text
 assign Task
@@ -276,7 +276,7 @@ open assigned learning
 → understand that work was saved and what happens next
 ```
 
-The branch remains a draft until that user-facing walkthrough is manually reviewed.
+The build + API + HTTP flow are verified in GitHub Actions. A browser-level visual/manual learner walkthrough has **not** been claimed as complete in this development environment; the branch stays draft until that experience is reviewed manually.
 
 ## Phase 2
 
