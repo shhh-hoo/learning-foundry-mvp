@@ -55,7 +55,7 @@ try {
   if (!learner.conversationEvents?.some((item) => item.role === "ASSISTANT")) throw new Error("Assistant guidance was not persisted");
   if (!learner.sessions?.length) throw new Error("Runtime session was not persisted");
 
-  const appResponse = await fetch(`${baseUrl}/app/`);
+  const appResponse = await fetch(`${baseUrl}/app/index.html`);
   if (!appResponse.ok || !(await appResponse.text()).includes("Learning Foundry MVP")) throw new Error("React app build is not being served");
 
   const componentResponse = await fetch(`${baseUrl}/component-assets/ratio-explorer/component.html`);
