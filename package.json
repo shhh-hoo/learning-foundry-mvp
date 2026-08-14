@@ -10,6 +10,7 @@
     "dev:web": "vite",
     "dev:server": "node --watch server.mjs",
     "test": "node checks.mjs",
+    "smoke": "node smoke-server.mjs",
     "reset": "node reset-state.mjs"
   },
   "dependencies": {
