@@ -1,6 +1,6 @@
 {
   "name": "learning-foundry-mvp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": { "node": "^20.19.0 || >=22.12.0" },
@@ -14,11 +14,20 @@
     "reset": "node reset-state.mjs"
   },
   "dependencies": {
+    "@assistant-ui/react": "0.15.14",
+    "@tanstack/react-query": "5.101.4",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "lucide-react": "0.474.0",
+    "radix-ui": "1.6.7",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "tailwind-merge": "3.6.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
     "@vitejs/plugin-react": "6.0.5",
+    "tailwindcss": "4.3.3",
     "vite": "8.2.1"
   }
 }
