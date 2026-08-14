@@ -63,10 +63,7 @@ function studentView(state, studentId) {
 async function api(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/state") {
     const state = await readState();
-    return sendJson(res, 200, {
-      ...state,
-      capabilities: listAvailableCapabilities()
-    });
+    return sendJson(res, 200, { ...state, capabilities: listAvailableCapabilities() });
   }
 
   if (req.method === "GET" && url.pathname === "/api/student") {
@@ -97,7 +94,8 @@ async function api(req, res, url) {
           createdAt: now,
           constraints: { requireCapabilityId: null, excludeCapabilityIds: [] },
           currentDecisionId: null,
-          currentRuntimeSessionId: null
+          currentRuntimeSessionId: null,
+          lastCompletedRuntimeSessionId: null
         };
         state.tasks.push(task);
         return [task];
@@ -120,11 +118,28 @@ async function api(req, res, url) {
         const task = findTask(state, input.taskId);
         if (!task) throw new Error("Task not found");
         if (input.studentId && task.studentId !== input.studentId) throw new Error("Task does not belong to this student");
-        return executeLearnerTurn(state, {
-          taskId: task.id,
-          trigger,
-          userMessage: message
-        });
+        return executeLearnerTurn(state, { taskId: task.id, trigger, userMessage: message });
+      });
+      return sendJson(res, 200, result);
+    } catch (error) {
+      return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/runtime-start") {
+    const input = await readJson(req);
+    try {
+      const result = await mutateState((state) => {
+        const task = findTask(state, input.taskId);
+        if (!task) throw new Error("Task not found");
+        const session = state.runtimeSessions.find((item) => item.id === input.runtimeSessionId && item.taskId === task.id);
+        if (!session) throw new Error("Runtime session not found");
+        if (session.status !== "READY") throw new Error("Activity is not ready to start");
+        session.status = "LOADING";
+        session.startedAt = new Date().toISOString();
+        task.currentRuntimeSessionId = session.id;
+        task.learnerState = "ACTIVITY_ACTIVE";
+        return { session, task };
       });
       return sendJson(res, 200, result);
     } catch (error) {
@@ -156,9 +171,14 @@ async function api(req, res, url) {
 
         if (message.type === "COMPONENT_INITIALIZED") session.status = "RUNNING";
         if (message.type === "STATE_CHANGED") session.stateSnapshot = message.payload.state ?? null;
-        if (message.type === "COMPONENT_COMPLETED") session.status = "COMPLETED";
+        if (message.type === "COMPONENT_COMPLETED") {
+          session.status = "COMPLETED";
+          session.completedAt = new Date().toISOString();
+          task.lastCompletedRuntimeSessionId = session.id;
+        }
         if (message.type === "COMPONENT_ERROR") {
           session.status = "FAILED";
+          session.completedAt = new Date().toISOString();
           task.learnerState = "RUNTIME_FAILURE";
         }
 
@@ -226,9 +246,17 @@ async function api(req, res, url) {
         };
         state.teacherDecisions.push(decision);
 
-        const currentRuntime = task.currentRuntimeSessionId
+        let currentRuntime = task.currentRuntimeSessionId
           ? state.runtimeSessions.find((session) => session.id === task.currentRuntimeSessionId) ?? null
           : null;
+
+        if (currentRuntime?.status === "READY") {
+          currentRuntime.status = "CANCELLED";
+          currentRuntime.completedAt = new Date().toISOString();
+          task.currentRuntimeSessionId = null;
+          currentRuntime = null;
+        }
+
         const canReplanNow = !currentRuntime || !["LOADING", "RUNNING"].includes(currentRuntime.status);
         const nextTurn = canReplanNow
           ? await executeLearnerTurn(state, { taskId: task.id, trigger: "TEACHER_INTERVENTION" })
