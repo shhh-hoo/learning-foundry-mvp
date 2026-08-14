@@ -38,7 +38,7 @@ try {
     method: "POST",
     body: JSON.stringify({
       goal: "Understand proportional reasoning",
-      teacherInstruction: "Start conceptually.",
+      teacherInstruction: "Focus on meaning before calculation.",
       studentIds: ["alice"]
     })
   });
@@ -49,11 +49,32 @@ try {
     method: "POST",
     body: JSON.stringify({ studentId: "alice", taskId: task.id, trigger: "TASK_OPENED" })
   });
-  if (opening.committedAction?.kind !== "LAUNCH_ASSET") throw new Error("Opening learner turn did not launch an asset");
+  if (opening.committedAction?.kind !== "NONE") throw new Error("Task opening should start with guidance");
 
-  const learner = await json("/api/student?id=alice");
+  const offer = await json("/api/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      studentId: "alice",
+      taskId: task.id,
+      trigger: "CHAT_MESSAGE",
+      message: "I can calculate it but I don't understand what the ratio means."
+    })
+  });
+  if (offer.committedAction?.kind !== "LAUNCH_ASSET") throw new Error("Learner need did not create an activity offer");
+
+  let learner = await json("/api/student?id=alice");
+  const offeredSession = learner.sessions.at(-1);
   if (!learner.conversationEvents?.some((item) => item.role === "ASSISTANT")) throw new Error("Assistant guidance was not persisted");
-  if (!learner.sessions?.length) throw new Error("Runtime session was not persisted");
+  if (offeredSession?.status !== "READY") throw new Error("Activity was not left ready for learner confirmation");
+
+  const started = await json("/api/runtime-start", {
+    method: "POST",
+    body: JSON.stringify({ taskId: task.id, runtimeSessionId: offeredSession.id })
+  });
+  if (started.session?.status !== "LOADING") throw new Error("Explicit activity start did not move runtime to LOADING");
+
+  learner = await json("/api/student?id=alice");
+  if (learner.tasks.at(-1)?.learnerState !== "ACTIVITY_ACTIVE") throw new Error("Learner state did not enter activity mode");
 
   const appResponse = await fetch(`${baseUrl}/`);
   if (!appResponse.ok || !(await appResponse.text()).includes("Learning Foundry MVP")) throw new Error("React app build is not being served at root");
