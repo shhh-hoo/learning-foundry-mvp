@@ -1,6 +1,7 @@
 import { CAPABILITIES } from "./src/capabilities/registry.mjs";
 import { eligibleCapabilitiesForTask } from "./src/learning/action-gate.mjs";
 import { executeLearnerTurn } from "./src/learning/learner-turn.mjs";
+import { buildDifyTurnContext, mapDifyResult } from "./src/orchestrator/dify.mjs";
 
 if (CAPABILITIES.length !== 2) throw new Error("Expected two demo capabilities");
 
@@ -10,6 +11,7 @@ const task = {
   goal: "Understand ratios",
   status: "OPEN",
   learnerState: "NOT_STARTED",
+  teacherInstruction: "Focus on meaning before formulas.",
   constraints: { requireCapabilityId: null, excludeCapabilityIds: [] },
   currentDecisionId: null,
   currentRuntimeSessionId: null
@@ -56,5 +58,37 @@ const eligible = eligibleCapabilitiesForTask(
   CAPABILITIES
 );
 if (eligible.some((item) => item.id === "ratio-explorer")) throw new Error("Teacher exclusion was not hard-filtered");
+
+const difyContext = buildDifyTurnContext({
+  trigger: "CHAT_MESSAGE",
+  student: state.students[0],
+  task,
+  userMessage: "Can I try a numerical question?",
+  conversation: [{ role: "LEARNER", content: "Can I try a numerical question?" }],
+  latestAttempt: null,
+  activeRuntime: null,
+  capabilities: CAPABILITIES
+});
+if ("demoNeed" in difyContext.learner) throw new Error("Dify context must not include mock-only demoNeed");
+if (difyContext.availableCapabilities.some((item) => "runtime" in item || "version" in item)) {
+  throw new Error("Dify must receive semantic capability metadata, not runtime bindings");
+}
+
+const mappedSuggestion = mapDifyResult({
+  assistant_message: "Let's try one numerical question.",
+  action_type: "SUGGEST_CAPABILITY",
+  capability_id: "calculation-trainer",
+  reason: "The learner explicitly requested numerical practice."
+});
+if (mappedSuggestion.actionProposal.kind !== "LAUNCH_CAPABILITY") throw new Error("Dify suggestion mapping failed");
+if (mappedSuggestion.actionProposal.capabilityId !== "calculation-trainer") throw new Error("Dify capability mapping failed");
+
+const mappedResponse = mapDifyResult({
+  assistant_message: "Tell me what part is unclear.",
+  action_type: "RESPOND",
+  capability_id: "",
+  reason: "More clarification is useful."
+});
+if (mappedResponse.actionProposal.kind !== "CHAT_ONLY") throw new Error("Dify response mapping failed");
 
 console.log("checks passed");
