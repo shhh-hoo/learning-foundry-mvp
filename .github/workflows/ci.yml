@@ -17,6 +17,7 @@ jobs:
       - run: node --check server.mjs
       - run: node --check src/learning/action-gate.mjs
       - run: node --check src/learning/learner-turn.mjs
+      - run: node --check src/orchestrator/dify.mjs
       - run: node --check src/orchestrator/mock.mjs
       - run: npm test
       - run: npm run smoke
