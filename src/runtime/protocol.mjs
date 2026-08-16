@@ -1,15 +1,6 @@
-export const PROTOCOL = "foundry-component";
-export const PROTOCOL_VERSION = "0.1";
-
-export const FOUNDRY_TO_COMPONENT = new Set([
-  "FOUNDRY_INIT",
-  "FOUNDRY_PAUSE",
-  "FOUNDRY_RESUME",
-  "FOUNDRY_RESET",
-  "FOUNDRY_RESTORE"
-]);
-
-export const COMPONENT_TO_FOUNDRY = new Set([
+const PROTOCOL = "foundry-component";
+const PROTOCOL_VERSION = "0.1";
+const COMPONENT_TO_FOUNDRY = new Set([
   "COMPONENT_READY",
   "COMPONENT_INITIALIZED",
   "LEARNING_EVENT",
@@ -19,19 +10,7 @@ export const COMPONENT_TO_FOUNDRY = new Set([
   "COMPONENT_ERROR"
 ]);
 
-export function makeMessage({ runtimeSessionId, type, payload = {} }) {
-  return {
-    protocol: PROTOCOL,
-    protocolVersion: PROTOCOL_VERSION,
-    messageId: crypto.randomUUID(),
-    runtimeSessionId,
-    type,
-    timestamp: new Date().toISOString(),
-    payload
-  };
-}
-
-export function isFoundryMessage(value) {
+function isFoundryMessage(value) {
   return Boolean(
     value &&
     typeof value === "object" &&

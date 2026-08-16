@@ -1,37 +1,202 @@
 # Learning Foundry MVP
 
-A deliberately thin, runnable vertical slice of Learning Foundry.
+A learner-facing vertical slice of Learning Foundry. The current branch is still a draft: the runtime spine is working, Dify is now the real AI orchestration path, and the learner / teacher UX is still being evaluated rather than treated as settled.
+
+## Core product loop
 
 ```text
 Teacher assigns a goal
-→ each student gets a Task
-→ Foundry sends current state + available Capabilities to an orchestrator
-→ orchestrator returns Capability Resolution + ActivityPlan
-→ Asset Stage launches an exact ComponentAsset in a sandboxed iframe
-→ Component reports events and Attempt through Runtime Protocol v0.1
-→ Foundry persists the Attempt and a bounded diagnosis proposal
-→ teacher inspects evidence and can change the next capability resolution
+→ learner opens the Task
+→ Foundry assembles bounded learner-turn context
+→ Dify decides the learner-facing response and whether to suggest a capability
+→ Foundry ActionGate validates the proposal
+→ learner may run a ComponentAsset
+→ Component reports events and an Attempt
+→ Foundry persists factual Product State
+→ the next learner turn goes back through Dify
 ```
 
-## What this MVP proves
+Foundry owns canonical Task, conversation, RuntimeSession, Attempt, teacher policy and Component execution. Dify owns AI orchestration. Components do not call Dify directly.
 
-- one teacher (teacher and expert are the same actor)
-- multiple seeded students
-- persistent Product State behind a repository boundary
-- a Capability Registry independent of subject knowledge
-- Web ComponentAssets launched in a sandboxed iframe
-- a small `postMessage` Runtime Protocol
-- teacher `REQUIRE_CAPABILITY` / `EXCLUDE_CAPABILITY` intervention
-- mock orchestration that can be replaced by Dify
-- no n8n, LangGraph, custom LLM control plane, multi-tenant/RLS machinery, or long-term learning lifecycle yet
+## Dify integration
 
-The local JSON store is only a demo persistence adapter. It is intentionally easy to replace with Postgres/Supabase later.
+The Dify app is a Workflow with one input:
 
-## Run
+```text
+turn_context_json
+```
 
-Requires Node.js 20+ and no third-party packages.
+Foundry sends a bounded JSON view containing:
+
+```text
+trigger
+task: goal / teacherInstruction / learnerState
+learner: id / name
+userMessage
+recent conversation
+latest Attempt
+active activity state
+available capabilities: id / title / purpose / tags
+```
+
+Mock-only learner fields and Component runtime bindings are not sent to Dify.
+
+The Workflow Output node exposes the LLM structured output as `result`:
+
+```json
+{
+  "assistant_message": "...",
+  "action_type": "RESPOND | SUGGEST_CAPABILITY | WAIT_FOR_TEACHER",
+  "capability_id": "...",
+  "reason": "..."
+}
+```
+
+`src/orchestrator/dify.mjs` is deliberately a thin transport/contract adapter:
+
+```text
+Foundry context
+→ POST /workflows/run
+→ data.outputs.result
+→ map Dify action to the existing Foundry proposal contract
+```
+
+Mappings are intentionally mechanical:
+
+```text
+RESPOND
+→ CHAT_ONLY
+
+SUGGEST_CAPABILITY
+→ LAUNCH_CAPABILITY
+
+WAIT_FOR_TEACHER
+→ WAIT_FOR_TEACHER
+```
+
+The adapter contains no prompts, pedagogical classifier, keyword routing, retrieval logic or model selection. Those remain in Dify. There is no silent fallback from Dify to the mock.
+
+## Orchestrator modes
+
+Offline development / CI uses the deterministic mock by default:
 
 ```bash
+npm start
+```
+
+Real MVP orchestration uses the published Dify Workflow:
+
+```bash
+ORCHESTRATOR=dify \
+DIFY_API_KEY=your_workflow_app_api_key \
+npm start
+```
+
+For Dify Cloud the default API base is:
+
+```text
+https://api.dify.ai/v1
+```
+
+For another deployment, override it server-side:
+
+```bash
+DIFY_BASE_URL=https://your-dify.example/v1
+```
+
+`DIFY_API_KEY` must remain server-side. If `ORCHESTRATOR=dify` is selected and Dify fails or the key is missing, the request fails visibly; the product does not secretly switch to the mock.
+
+## Capability Registry
+
+The current Registry keeps executable runtime metadata inside Foundry while exposing only semantic capability metadata to Dify.
+
+Current demo capabilities:
+
+```text
+Ratio Explorer
+- visual interactive activity for understanding what ratios and proportional relationships mean
+
+Calculation Trainer
+- numerical practice for independently solving proportional-reasoning calculation questions
+```
+
+Dify proposes a capability ID. Foundry resolves the exact registered version and runtime binding after the proposal is returned.
+
+## Component Runtime Protocol v0.1
+
+Learning Components are independent Web apps rather than React product UI components or Dify nodes.
+
+```text
+public/component-assets/
+  ratio-explorer/component.html
+  calculation-trainer/component.html
+```
+
+Current Component → Foundry messages:
+
+```text
+COMPONENT_READY
+COMPONENT_INITIALIZED
+LEARNING_EVENT
+ATTEMPT_SUBMITTED
+STATE_CHANGED
+COMPONENT_COMPLETED
+COMPONENT_ERROR
+```
+
+Messages use the `foundry-component` envelope with protocol version `0.1`, runtime session identity, message identity, timestamp and payload.
+
+The runtime flow is:
+
+```text
+COMPONENT_READY
+→ FOUNDRY_INIT
+→ COMPONENT_INITIALIZED
+→ LEARNING_EVENT / STATE_CHANGED / ATTEMPT_SUBMITTED
+→ COMPONENT_COMPLETED or COMPONENT_ERROR
+```
+
+Attempts are factual evidence. A Component cannot write teacher decisions, authoritative diagnosis or learning outcomes directly.
+
+## Current learner surfaces
+
+The current UI contains:
+
+```text
+My learning
+→ Task guidance / conversation
+→ optional activity offer
+→ learner Start
+→ Component as primary surface
+→ Ask Foundry remains available
+→ completion returns to the learner flow
+```
+
+These interaction choices are still under product review. In particular, the Activity Offer, screen balance and Teacher Dashboard should not be treated as permanent architecture simply because they are implemented.
+
+## Teacher surface
+
+The current Teacher Workspace supports assigning a goal, seeing learner conversation / recent work and applying capability constraints. Its scope is intentionally subject to further simplification after the real Dify-powered learner loop is used end to end.
+
+## Open-source foundations
+
+Generic UI/state work uses mature open source rather than custom replacements:
+
+- `@assistant-ui/react` — Thread / Message / Composer primitives with Foundry-backed external-store conversation state;
+- shadcn/ui patterns — local open-code Button / Card / Badge / Sheet primitives;
+- TanStack Query — React server state and invalidation;
+- Tailwind CSS + Radix UI;
+- React + Vite.
+
+See `THIRD_PARTY_NOTICES.md` for provenance and licenses.
+
+## Run and verify
+
+Requires Node.js `22.12+`.
+
+```bash
+npm install
+npm run build
 npm start
 ```
 
@@ -43,119 +208,61 @@ Reset demo state:
 npm run reset
 ```
 
-Run the small smoke checks:
+Run the deliberately small verification set:
 
 ```bash
 npm test
+npm run smoke
 ```
 
-## Demo surfaces
-
-The product is one small shell with hash-routed surfaces:
-
-- `/#teacher` — Teacher Workspace
-- `/#teacher/alice` — Alice in the teacher dashboard
-- `/#student/alice`
-- `/#student/bob`
-- `/#student/charlie`
-
-A typical walkthrough is:
-
-1. Teacher assigns one goal to all three students.
-2. Open Alice and plan her next activity → `Ratio Explorer`.
-3. Open Bob and plan his next activity → `Calculation Trainer`.
-4. Submit an Attempt inside the iframe ComponentAsset.
-5. Return to Teacher Workspace and inspect the persisted Attempt + diagnosis proposal.
-6. Require or exclude a capability, then plan the learner's next activity again.
-
-## Component integration
-
-Learning Components are independent Web apps, not React UI components and not Dify nodes.
-
-For the demo they live under:
-
-```text
-public/component-assets/
-  ratio-explorer/component.html
-  calculation-trainer/component.html
-```
-
-The Registry stores their callable identity and runtime metadata:
-
-```js
-{
-  id: "ratio-explorer",
-  version: "1.0.0",
-  runtime: {
-    type: "web",
-    launchUrl: "/component-assets/ratio-explorer/component.html",
-    protocolVersion: "0.1"
-  }
-}
-```
-
-`public/bridge.js` owns the `COMPONENT_READY → FOUNDRY_INIT` handshake. `public/app.js` forwards subsequent Component events to Foundry Product State. Components cannot write diagnoses, teacher decisions, or learning outcomes directly.
-
-A real deployment should serve untrusted/generated ComponentAssets from a separate origin. Same-server sandboxed iframes are used here only to keep the MVP one-command runnable.
-
-## Dify adapter
-
-Mock orchestration is the default so the repo runs without external services.
-
-To switch to a Dify Workflow:
-
-```bash
-ORCHESTRATOR=dify \
-DIFY_BASE_URL=https://api.dify.ai \
-DIFY_API_KEY=your_workflow_api_key \
-npm start
-```
-
-The Workflow receives three string inputs:
-
-```text
-context_json
-capabilities_json
-latest_attempt_json
-```
-
-It should return either `resolution` + `plan` output variables, or a `result` output containing:
-
-```json
-{
-  "resolution": {},
-  "plan": {}
-}
-```
-
-Dify is only a replaceable orchestration implementation. Foundry still owns Product State, the Registry, runtime sessions, Attempts, and teacher decisions.
+CI verifies the React build, backend syntax, learner-flow contracts, Dify context/result mapping and the offline HTTP smoke. CI does not contain a real Dify API secret, so the live published Workflow must be verified locally with `ORCHESTRATOR=dify`.
 
 ## Repository map
 
 ```text
-server.mjs                  HTTP + Product API
+client/
+  src/
+    App.jsx
+    LearnerHome.jsx
+    LearnerWorkspace.jsx
+    TeacherWorkspace.jsx
+    RuntimeFrame.jsx
+    api.js
+    components/
+      FoundryChatProvider.jsx
+      FoundryThread.jsx
+      ActivityOffer.jsx
+      ui/
+
+server.mjs
 src/
-  product-state/store.mjs   persistence boundary
-  capabilities/registry.mjs Capability Registry
-  orchestrator/mock.mjs     local runnable orchestration
-  orchestrator/dify.mjs     Dify Workflow adapter
-  runtime/protocol.mjs      Runtime Protocol v0.1
-public/
-  demo.html                 single-page shell
-  app.js                    Teacher + Learner surfaces
-  bridge.js                 iframe runtime bridge
-  component-assets/         independent learning Web apps
-data/seed.json              demo Product State seed
-checks.mjs                  intentionally small smoke gate
+  product-state/store.mjs
+  capabilities/registry.mjs
+  learning/learner-turn.mjs
+  learning/action-gate.mjs
+  orchestrator/index.mjs
+  orchestrator/mock.mjs        # offline / CI fixture
+  orchestrator/dify.mjs        # real Dify Workflow adapter
+  runtime/protocol.mjs
+
+public/component-assets/
+data/seed.json
+checks.mjs
+smoke-server.mjs
+THIRD_PARTY_NOTICES.md
 ```
 
-## Next product work
+## Next validation
 
-Keep the sequence narrow:
+Do not add more orchestration infrastructure yet. The next useful test is to publish the existing Dify Workflow, run Foundry with `ORCHESTRATOR=dify`, and use one learner continuously through:
 
-1. connect a real Dify learner-orchestration workflow;
-2. replace one demo ComponentAsset with a real existing learning app;
-3. make Attempt/context input materially change the Dify decision;
-4. add one `NO_MATCH → preview → confirm → register → learner uses it` supply path.
+```text
+Task
+→ real Dify conversation
+→ real capability suggestion
+→ Component
+→ Attempt
+→ real Dify continuation
+```
 
-Do not expand school tenancy, analytics, Retry/Transfer/Retention, or optimization until this loop feels good as a product demo.
+Only after that end-to-end experience is observed should the learner UX and Teacher Dashboard be simplified or changed.

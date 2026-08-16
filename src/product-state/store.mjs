@@ -6,6 +6,16 @@ const ROOT = process.cwd();
 const SEED_PATH = resolve(ROOT, "data/seed.json");
 const STATE_PATH = resolve(ROOT, "data/state.json");
 
+function normalizeState(state) {
+  state.conversationEvents ??= [];
+  state.orchestrationDecisions ??= [];
+  state.runtimeSessions ??= [];
+  state.attempts ??= [];
+  state.learningEvents ??= [];
+  state.teacherDecisions ??= [];
+  return state;
+}
+
 async function ensureStateFile() {
   await mkdir(dirname(STATE_PATH), { recursive: true });
   if (!existsSync(STATE_PATH)) await copyFile(SEED_PATH, STATE_PATH);
@@ -13,13 +23,13 @@ async function ensureStateFile() {
 
 export async function readState() {
   await ensureStateFile();
-  return JSON.parse(await readFile(STATE_PATH, "utf8"));
+  return normalizeState(JSON.parse(await readFile(STATE_PATH, "utf8")));
 }
 
 export async function writeState(state) {
   await ensureStateFile();
   const tempPath = `${STATE_PATH}.tmp`;
-  await writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await writeFile(tempPath, `${JSON.stringify(normalizeState(state), null, 2)}\n`, "utf8");
   await rename(tempPath, STATE_PATH);
   return state;
 }

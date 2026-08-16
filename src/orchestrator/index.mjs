@@ -1,8 +1,9 @@
-import { runMockOrchestration } from "./mock.mjs";
 import { runDifyOrchestration } from "./dify.mjs";
+import { runMockOrchestration } from "./mock.mjs";
 
-export async function runOrchestration(input) {
-  return process.env.ORCHESTRATOR === "dify"
-    ? runDifyOrchestration(input)
-    : runMockOrchestration(input);
+export function runOrchestration(input) {
+  const mode = process.env.ORCHESTRATOR?.trim() || "mock";
+  if (mode === "mock") return runMockOrchestration(input);
+  if (mode === "dify") return runDifyOrchestration(input);
+  throw new Error(`Unsupported ORCHESTRATOR: ${mode}`);
 }

@@ -3,7 +3,7 @@ export const CAPABILITIES = [
     id: "ratio-explorer",
     version: "1.0.0",
     title: "Ratio Explorer",
-    purpose: "Interactive conceptual proportional-reasoning task.",
+    purpose: "A visual interactive activity for understanding what ratios and proportional relationships mean by observing how two quantities change together.",
     tags: ["conceptual", "ratio"],
     availability: "AVAILABLE",
     runtime: { type: "web", launchUrl: "/component-assets/ratio-explorer/component.html", protocolVersion: "0.1" }
@@ -12,7 +12,7 @@ export const CAPABILITIES = [
     id: "calculation-trainer",
     version: "1.0.0",
     title: "Calculation Trainer",
-    purpose: "Interactive numerical proportional-reasoning practice.",
+    purpose: "A numerical practice activity for independently solving proportional-reasoning calculation questions.",
     tags: ["procedural", "ratio"],
     availability: "AVAILABLE",
     runtime: { type: "web", launchUrl: "/component-assets/calculation-trainer/component.html", protocolVersion: "0.1" }

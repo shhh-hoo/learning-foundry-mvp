@@ -6,9 +6,10 @@
     { "id": "charlie", "name": "Charlie", "demoNeed": "mixed" }
   ],
   "tasks": [],
+  "conversationEvents": [],
+  "orchestrationDecisions": [],
   "runtimeSessions": [],
   "attempts": [],
   "learningEvents": [],
-  "diagnosisProposals": [],
   "teacherDecisions": []
 }

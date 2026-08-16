@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { readState, mutateState } from "./src/product-state/store.mjs";
 import { getCapability, listAvailableCapabilities } from "./src/capabilities/registry.mjs";
-import { runOrchestration } from "./src/orchestrator/index.mjs";
+import { executeLearnerTurn } from "./src/learning/learner-turn.mjs";
 import { isComponentMessage } from "./src/runtime/protocol.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)));
@@ -49,22 +49,21 @@ function findStudent(state, studentId) {
 function studentView(state, studentId) {
   const student = findStudent(state, studentId);
   if (!student) return null;
-  const tasks = state.tasks.filter((task) => task.studentId === studentId);
-  const attempts = state.attempts.filter((attempt) => attempt.studentId === studentId);
-  const sessions = state.runtimeSessions.filter((session) => session.studentId === studentId);
-  const diagnosisProposals = state.diagnosisProposals.filter((item) => item.studentId === studentId);
-  const decisions = state.teacherDecisions.filter((item) => item.studentId === studentId);
-  return { student, tasks, attempts, sessions, diagnosisProposals, decisions };
+  const taskIds = new Set(state.tasks.filter((task) => task.studentId === studentId).map((task) => task.id));
+  return {
+    student,
+    tasks: state.tasks.filter((task) => task.studentId === studentId),
+    conversationEvents: state.conversationEvents.filter((item) => taskIds.has(item.taskId)),
+    orchestrationDecisions: state.orchestrationDecisions.filter((item) => taskIds.has(item.taskId)),
+    attempts: state.attempts.filter((attempt) => attempt.studentId === studentId),
+    sessions: state.runtimeSessions.filter((session) => session.studentId === studentId)
+  };
 }
 
 async function api(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/state") {
     const state = await readState();
-    return sendJson(res, 200, {
-      ...state,
-      capabilities: listAvailableCapabilities(),
-      orchestrator: process.env.ORCHESTRATOR === "dify" ? "dify" : "mock"
-    });
+    return sendJson(res, 200, { ...state, capabilities: listAvailableCapabilities() });
   }
 
   if (req.method === "GET" && url.pathname === "/api/student") {
@@ -89,11 +88,14 @@ async function api(req, res, url) {
           id: randomUUID(),
           studentId,
           goal,
+          teacherInstruction: String(input.teacherInstruction ?? "").trim(),
           status: "OPEN",
+          learnerState: "NOT_STARTED",
           createdAt: now,
           constraints: { requireCapabilityId: null, excludeCapabilityIds: [] },
-          currentResolution: null,
-          currentPlan: null
+          currentDecisionId: null,
+          currentRuntimeSessionId: null,
+          lastCompletedRuntimeSessionId: null
         };
         state.tasks.push(task);
         return [task];
@@ -103,48 +105,41 @@ async function api(req, res, url) {
     return sendJson(res, 201, { tasks: created });
   }
 
-  if (req.method === "POST" && url.pathname === "/api/orchestrate") {
+  if (req.method === "POST" && url.pathname === "/api/chat") {
     const input = await readJson(req);
+    const message = String(input.message ?? "").trim();
+    const trigger = String(input.trigger ?? (message ? "CHAT_MESSAGE" : "TASK_OPENED"));
+    const allowedTriggers = new Set(["TASK_OPENED", "CHAT_MESSAGE", "LEARNER_REQUESTED_SWITCH"]);
+    if (!allowedTriggers.has(trigger)) return sendJson(res, 400, { error: "Unsupported learner-turn trigger" });
+    if (trigger === "CHAT_MESSAGE" && !message) return sendJson(res, 400, { error: "message is required" });
+
     try {
       const result = await mutateState(async (state) => {
         const task = findTask(state, input.taskId);
         if (!task) throw new Error("Task not found");
-        const student = findStudent(state, task.studentId);
-        if (!student) throw new Error("Student not found");
+        if (input.studentId && task.studentId !== input.studentId) throw new Error("Task does not belong to this student");
+        return executeLearnerTurn(state, { taskId: task.id, trigger, userMessage: message });
+      });
+      return sendJson(res, 200, result);
+    } catch (error) {
+      return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
 
-        const latestAttempt = state.attempts
-          .filter((attempt) => attempt.taskId === task.id)
-          .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0] ?? null;
-
-        const { resolution, plan } = await runOrchestration({
-          student,
-          task,
-          capabilities: listAvailableCapabilities(),
-          latestAttempt
-        });
-
-        task.currentResolution = resolution;
-        task.currentPlan = plan;
-
-        if (plan.status !== "READY") return { resolution, plan, capability: null, runtimeSession: null };
-
-        const capability = getCapability(plan.capabilityId, plan.capabilityVersion);
-        if (!capability) throw new Error("Orchestrator selected an unavailable capability version");
-
-        const runtimeSession = {
-          id: randomUUID(),
-          studentId: student.id,
-          taskId: task.id,
-          capabilityId: capability.id,
-          capabilityVersion: capability.version,
-          status: "LOADING",
-          parameters: plan.parameters ?? {},
-          stateSnapshot: null,
-          createdAt: new Date().toISOString()
-        };
-        state.runtimeSessions.push(runtimeSession);
-        task.currentRuntimeSessionId = runtimeSession.id;
-        return { resolution, plan, capability, runtimeSession };
+  if (req.method === "POST" && url.pathname === "/api/runtime-start") {
+    const input = await readJson(req);
+    try {
+      const result = await mutateState((state) => {
+        const task = findTask(state, input.taskId);
+        if (!task) throw new Error("Task not found");
+        const session = state.runtimeSessions.find((item) => item.id === input.runtimeSessionId && item.taskId === task.id);
+        if (!session) throw new Error("Runtime session not found");
+        if (session.status !== "READY") throw new Error("Activity is not ready to start");
+        session.status = "LOADING";
+        session.startedAt = new Date().toISOString();
+        task.currentRuntimeSessionId = session.id;
+        task.learnerState = "ACTIVITY_ACTIVE";
+        return { session, task };
       });
       return sendJson(res, 200, result);
     } catch (error) {
@@ -158,7 +153,7 @@ async function api(req, res, url) {
     if (!isComponentMessage(message)) return sendJson(res, 400, { error: "Invalid Component Runtime Protocol message" });
 
     try {
-      const result = await mutateState((state) => {
+      const result = await mutateState(async (state) => {
         const session = state.runtimeSessions.find((item) => item.id === message.runtimeSessionId);
         if (!session) throw new Error("Runtime session not found");
         const task = findTask(state, session.taskId);
@@ -176,11 +171,18 @@ async function api(req, res, url) {
 
         if (message.type === "COMPONENT_INITIALIZED") session.status = "RUNNING";
         if (message.type === "STATE_CHANGED") session.stateSnapshot = message.payload.state ?? null;
-        if (message.type === "COMPONENT_COMPLETED") session.status = "COMPLETED";
-        if (message.type === "COMPONENT_ERROR") session.status = "FAILED";
+        if (message.type === "COMPONENT_COMPLETED") {
+          session.status = "COMPLETED";
+          session.completedAt = new Date().toISOString();
+          task.lastCompletedRuntimeSessionId = session.id;
+        }
+        if (message.type === "COMPONENT_ERROR") {
+          session.status = "FAILED";
+          session.completedAt = new Date().toISOString();
+          task.learnerState = "RUNTIME_FAILURE";
+        }
 
         let attempt = null;
-        let diagnosisProposal = null;
         if (message.type === "ATTEMPT_SUBMITTED") {
           attempt = {
             id: randomUUID(),
@@ -196,21 +198,13 @@ async function api(req, res, url) {
             submittedAt: message.timestamp
           };
           state.attempts.push(attempt);
-          diagnosisProposal = {
-            id: randomUUID(),
-            studentId: session.studentId,
-            taskId: session.taskId,
-            attemptId: attempt.id,
-            status: "REVIEW_PENDING",
-            summary: attempt.correct === false
-              ? "The latest Attempt contains an observable mismatch. Teacher review is recommended before treating it as a diagnosis."
-              : "The latest Attempt completed successfully. This runtime fact alone is not a mastery or learning-outcome claim.",
-            createdAt: new Date().toISOString()
-          };
-          state.diagnosisProposals.push(diagnosisProposal);
         }
 
-        return { session, attempt, diagnosisProposal };
+        const nextTurn = message.type === "COMPONENT_COMPLETED"
+          ? await executeLearnerTurn(state, { taskId: task.id, trigger: "COMPONENT_COMPLETED" })
+          : null;
+
+        return { session, attempt, nextTurn };
       });
       return sendJson(res, 200, result);
     } catch (error) {
@@ -221,7 +215,7 @@ async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/teacher-decisions") {
     const input = await readJson(req);
     try {
-      const decision = await mutateState((state) => {
+      const result = await mutateState(async (state) => {
         const task = findTask(state, input.taskId);
         if (!task) throw new Error("Task not found");
         const action = String(input.action ?? "");
@@ -230,17 +224,18 @@ async function api(req, res, url) {
         if (action === "REQUIRE_CAPABILITY") {
           if (!getCapability(capabilityId)) throw new Error("Capability not found");
           task.constraints.requireCapabilityId = capabilityId;
+          task.constraints.excludeCapabilityIds = (task.constraints.excludeCapabilityIds ?? []).filter((id) => id !== capabilityId);
         } else if (action === "EXCLUDE_CAPABILITY") {
           if (!getCapability(capabilityId)) throw new Error("Capability not found");
           task.constraints.excludeCapabilityIds = [...new Set([...(task.constraints.excludeCapabilityIds ?? []), capabilityId])];
           if (task.constraints.requireCapabilityId === capabilityId) task.constraints.requireCapabilityId = null;
         } else if (action === "CLEAR_CONSTRAINTS") {
           task.constraints = { requireCapabilityId: null, excludeCapabilityIds: [] };
-        } else if (action !== "ACCEPT_DIAGNOSIS") {
+        } else {
           throw new Error("Unknown teacher decision");
         }
 
-        const record = {
+        const decision = {
           id: randomUUID(),
           studentId: task.studentId,
           taskId: task.id,
@@ -249,10 +244,27 @@ async function api(req, res, url) {
           rationale: String(input.rationale ?? "").trim(),
           createdAt: new Date().toISOString()
         };
-        state.teacherDecisions.push(record);
-        return record;
+        state.teacherDecisions.push(decision);
+
+        let currentRuntime = task.currentRuntimeSessionId
+          ? state.runtimeSessions.find((session) => session.id === task.currentRuntimeSessionId) ?? null
+          : null;
+
+        if (currentRuntime?.status === "READY") {
+          currentRuntime.status = "CANCELLED";
+          currentRuntime.completedAt = new Date().toISOString();
+          task.currentRuntimeSessionId = null;
+          currentRuntime = null;
+        }
+
+        const canReplanNow = !currentRuntime || !["LOADING", "RUNNING"].includes(currentRuntime.status);
+        const nextTurn = canReplanNow
+          ? await executeLearnerTurn(state, { taskId: task.id, trigger: "TEACHER_INTERVENTION" })
+          : null;
+
+        return { decision, nextTurn };
       });
-      return sendJson(res, 201, { decision });
+      return sendJson(res, 201, result);
     } catch (error) {
       return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
     }
@@ -262,7 +274,7 @@ async function api(req, res, url) {
 }
 
 async function serveStatic(req, res, url) {
-  const requested = url.pathname === "/" ? "/index.html" : url.pathname;
+  const requested = url.pathname === "/" ? "/app/index.html" : url.pathname;
   const safePath = normalize(decodeURIComponent(requested)).replace(/^(\.\.[/\\])+/, "");
   const filePath = join(PUBLIC_ROOT, safePath);
   if (!filePath.startsWith(PUBLIC_ROOT)) return sendJson(res, 403, { error: "Forbidden" });
@@ -297,5 +309,4 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`Learning Foundry MVP: http://127.0.0.1:${PORT}`);
-  console.log(`Orchestrator: ${process.env.ORCHESTRATOR === "dify" ? "dify" : "mock"}`);
 });
