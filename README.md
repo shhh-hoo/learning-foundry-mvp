@@ -11,9 +11,10 @@ Teacher assigns a goal
 → Dify decides the learner-facing response and whether to suggest a capability
 → Foundry ActionGate validates the proposal
 → learner may run a ComponentAsset
-→ Component reports events and an Attempt
+→ Component reports events, state and deterministic Attempt results
 → Foundry persists factual Product State
-→ the next learner turn goes back through Dify
+→ Evidence Projection compiles attributable ComponentEvidence
+→ the next learner turn sends relevant evidence back to the Agent / Dify
 ```
 
 Foundry owns canonical Task, conversation, RuntimeSession, Attempt, teacher policy and Component execution. Dify owns AI orchestration. Components do not call Dify directly.
@@ -34,7 +35,7 @@ task: goal / teacherInstruction / learnerState
 learner: id / name
 userMessage
 recent conversation
-latest Attempt
+recent normalized Component evidence
 active activity state
 available capabilities: id / title / purpose / tags
 ```
@@ -158,6 +159,35 @@ COMPONENT_READY
 
 Attempts are factual evidence. A Component cannot write teacher decisions, authoritative diagnosis or learning outcomes directly.
 
+### Component evidence boundary
+
+Foundry now treats Component output as evidence for the Agent rather than as a learner-level interpretation.
+
+`src/evidence/component-evidence.mjs` deterministically projects persisted runtime facts into an Agent-readable packet:
+
+```text
+exact Component / version / runtime session
++ lifecycle
++ bounded raw observations
++ Attempts and learner responses
++ deterministic correctness
++ assistance used
++ final local state
++ provenance to event / Attempt ids
+```
+
+The packet deliberately does **not** contain mastery, misconception, learner-profile or next-step claims. Those are semantic interpretations owned by the Agent. Raw Product State remains canonical; the evidence packet is a reconstructible context projection.
+
+The three layers must remain distinguishable:
+
+```text
+raw observation
+→ deterministic Component fact
+→ Agent interpretation
+```
+
+An Agent interpretation may cite the first two, but it must not overwrite them.
+
 ## Current learner surfaces
 
 The current UI contains:
@@ -261,8 +291,9 @@ Task
 → real Dify conversation
 → real capability suggestion
 → Component
-→ Attempt
-→ real Dify continuation
+→ events / Attempt
+→ normalized ComponentEvidence
+→ real Dify continuation using that evidence
 ```
 
 Only after that end-to-end experience is observed should the learner UX and Teacher Dashboard be simplified or changed.
