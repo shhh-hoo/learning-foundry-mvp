@@ -2,6 +2,7 @@ import { CAPABILITIES } from "./src/capabilities/registry.mjs";
 import { eligibleCapabilitiesForTask } from "./src/learning/action-gate.mjs";
 import { executeLearnerTurn } from "./src/learning/learner-turn.mjs";
 import { buildDifyTurnContext, mapDifyResult } from "./src/orchestrator/dify.mjs";
+import { buildComponentEvidencePacket } from "./src/evidence/component-evidence.mjs";
 
 if (CAPABILITIES.length !== 2) throw new Error("Expected two demo capabilities");
 
@@ -59,17 +60,65 @@ const eligible = eligibleCapabilitiesForTask(
 );
 if (eligible.some((item) => item.id === "ratio-explorer")) throw new Error("Teacher exclusion was not hard-filtered");
 
+const evidenceSession = {
+  id: "runtime-evidence",
+  taskId: task.id,
+  studentId: "alice",
+  capabilityId: "ratio-explorer",
+  capabilityVersion: "1.0.0",
+  status: "COMPLETED",
+  createdAt: "2026-09-19T10:00:00.000Z",
+  startedAt: "2026-09-19T10:00:01.000Z",
+  completedAt: "2026-09-19T10:00:21.000Z",
+  stateSnapshot: { selected: "four-three" }
+};
+const evidencePacket = buildComponentEvidencePacket({
+  learningEvents: [
+    {
+      id: "event-1",
+      runtimeSessionId: evidenceSession.id,
+      type: "LEARNING_EVENT",
+      payload: { eventName: "choice_selected", data: { choiceId: "four-three" } },
+      occurredAt: "2026-09-19T10:00:10.000Z"
+    }
+  ],
+  attempts: [
+    {
+      id: "attempt-1",
+      runtimeSessionId: evidenceSession.id,
+      response: { selectedChoiceId: "four-three" },
+      correct: false,
+      assistanceUsed: ["hint-1"],
+      stateSnapshot: { selected: "four-three" },
+      submittedAt: "2026-09-19T10:00:20.000Z"
+    }
+  ]
+}, evidenceSession);
+if (evidencePacket.deterministicFacts.latestAttemptCorrect !== false) {
+  throw new Error("Evidence packet must preserve deterministic Component correctness");
+}
+if (evidencePacket.attempts[0].response.selectedChoiceId !== "four-three") {
+  throw new Error("Evidence packet lost the learner response");
+}
+if ("mastery" in evidencePacket || "misconception" in evidencePacket) {
+  throw new Error("Evidence packet must not fabricate learner interpretation");
+}
+
 const difyContext = buildDifyTurnContext({
   trigger: "CHAT_MESSAGE",
   student: state.students[0],
   task,
   userMessage: "Can I try a numerical question?",
   conversation: [{ role: "LEARNER", content: "Can I try a numerical question?" }],
-  latestAttempt: null,
+  componentEvidence: [evidencePacket],
   activeRuntime: null,
   capabilities: CAPABILITIES
 });
 if ("demoNeed" in difyContext.learner) throw new Error("Dify context must not include mock-only demoNeed");
+if ("latestAttempt" in difyContext) throw new Error("Dify context should use normalized Component evidence, not a one-off latestAttempt shortcut");
+if (difyContext.recentComponentEvidence[0]?.provenance?.attemptIds?.[0] !== "attempt-1") {
+  throw new Error("Dify context did not receive attributable Component evidence");
+}
 if (difyContext.availableCapabilities.some((item) => "runtime" in item || "version" in item)) {
   throw new Error("Dify must receive semantic capability metadata, not runtime bindings");
 }
