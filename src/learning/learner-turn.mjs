@@ -54,8 +54,12 @@ export async function executeLearnerTurn(state, { taskId, trigger, userMessage =
     ? state.runtimeSessions.find((session) => session.id === task.currentRuntimeSessionId) ?? null
     : null;
 
-  const recentRuntimeEvents = currentRuntime
-    ? state.learningEvents.filter((event) => event.runtimeSessionId === currentRuntime.id).slice(-8)
+  const activeRuntime = currentRuntime && ACTIVE_RUNTIME_STATUSES.has(currentRuntime.status)
+    ? currentRuntime
+    : null;
+
+  const recentRuntimeEvents = activeRuntime
+    ? state.learningEvents.filter((event) => event.runtimeSessionId === activeRuntime.id).slice(-8)
     : [];
 
   const eligibleCapabilities = eligibleCapabilitiesForTask(task, listAvailableCapabilities());
@@ -66,13 +70,13 @@ export async function executeLearnerTurn(state, { taskId, trigger, userMessage =
     userMessage: trimmedMessage,
     conversation,
     componentEvidence: recentComponentEvidence,
-    activeRuntime: currentRuntime
+    activeRuntime: activeRuntime
       ? {
-          id: currentRuntime.id,
-          capabilityId: currentRuntime.capabilityId,
-          capabilityVersion: currentRuntime.capabilityVersion,
-          status: currentRuntime.status,
-          stateSnapshot: currentRuntime.stateSnapshot,
+          id: activeRuntime.id,
+          capabilityId: activeRuntime.capabilityId,
+          capabilityVersion: activeRuntime.capabilityVersion,
+          status: activeRuntime.status,
+          stateSnapshot: activeRuntime.stateSnapshot,
           recentEvents: recentRuntimeEvents
         }
       : null,
@@ -91,7 +95,7 @@ export async function executeLearnerTurn(state, { taskId, trigger, userMessage =
       runtimeSessionId: packet.invocation.runtimeSessionId,
       componentId: packet.invocation.componentId,
       componentVersion: packet.invocation.componentVersion,
-      eventIds: packet.provenance.eventIds,
+      eventIds: packet.provenance.includedEventIds,
       attemptIds: packet.provenance.attemptIds
     })),
     createdAt: new Date().toISOString()
