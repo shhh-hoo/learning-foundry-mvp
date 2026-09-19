@@ -270,6 +270,7 @@ src/
   capabilities/registry.mjs
   learning/learner-turn.mjs
   learning/action-gate.mjs
+  evidence/component-evidence.mjs # deterministic Agent-readable evidence projection
   orchestrator/index.mjs
   orchestrator/mock.mjs        # offline / CI fixture
   orchestrator/dify.mjs        # real Dify Workflow adapter
@@ -280,6 +281,7 @@ data/seed.json
 checks.mjs
 smoke-server.mjs
 THIRD_PARTY_NOTICES.md
+docs/component-evidence-contract-v0.1.md
 ```
 
 ## Next validation
