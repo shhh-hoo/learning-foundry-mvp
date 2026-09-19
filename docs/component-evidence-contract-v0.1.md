@@ -125,7 +125,8 @@ Agent interpretation is intentionally **not part of ComponentEvidence**.
     componentId,
     componentVersion,
     runtimeSessionId,
-    eventIds,
+    sourceEventIds,
+    includedEventIds,
     attemptIds
   }
 }
@@ -157,7 +158,7 @@ Every orchestration decision that consumed Component evidence should retain refe
 runtimeSessionId
 componentId
 componentVersion
-eventIds[]
+eventIds[]   # only observations actually supplied to the Agent
 attemptIds[]
 ```
 
