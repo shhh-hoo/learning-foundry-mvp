@@ -19,6 +19,7 @@ function durationMs(startedAt, completedAt) {
 }
 
 function boundedObservations(events, maxObservations = 32) {
+  if (maxObservations <= 0) return [];
   if (events.length <= maxObservations) return events;
   const headCount = Math.min(4, maxObservations);
   const tailCount = Math.max(0, maxObservations - headCount);
@@ -93,7 +94,8 @@ export function buildComponentEvidencePacket(state, session, { maxObservations =
       componentId: session.capabilityId,
       componentVersion: session.capabilityVersion,
       runtimeSessionId: session.id,
-      eventIds: allEvents.map((event) => event.id),
+      sourceEventIds: allEvents.map((event) => event.id),
+      includedEventIds: observations.map((event) => event.id),
       attemptIds: attempts.map((attempt) => attempt.id)
     }
   };
