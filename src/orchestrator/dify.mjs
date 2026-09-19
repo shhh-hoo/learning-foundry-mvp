@@ -32,7 +32,7 @@ export function buildDifyTurnContext({
   task,
   userMessage = "",
   conversation = [],
-  latestAttempt = null,
+  componentEvidence = [],
   activeRuntime = null,
   capabilities = []
 }) {
@@ -49,16 +49,7 @@ export function buildDifyTurnContext({
     },
     userMessage,
     conversation: conversation.map(({ role, content }) => ({ role, content })),
-    latestAttempt: latestAttempt
-      ? {
-          capabilityId: latestAttempt.capabilityId,
-          response: latestAttempt.response,
-          correct: latestAttempt.correct,
-          assistanceUsed: latestAttempt.assistanceUsed ?? [],
-          stateSnapshot: latestAttempt.stateSnapshot ?? null,
-          submittedAt: latestAttempt.submittedAt
-        }
-      : null,
+    recentComponentEvidence: componentEvidence,
     activeActivity: activeRuntime
       ? {
           capabilityId: activeRuntime.capabilityId,

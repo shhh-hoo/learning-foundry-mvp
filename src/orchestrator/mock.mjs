@@ -21,7 +21,7 @@ export async function runMockOrchestration({
   task,
   userMessage,
   capabilities,
-  latestAttempt,
+  componentEvidence = [],
   activeRuntime
 }) {
   if (!capabilities.length) {
@@ -52,8 +52,10 @@ export async function runMockOrchestration({
   }
 
   if (trigger === "COMPONENT_COMPLETED") {
-    if (latestAttempt?.correct === false) {
-      const alternative = otherCapability(capabilities, latestAttempt.capabilityId) ?? pickPreferredCapability(student, capabilities);
+    const latestEvidence = componentEvidence.at(-1) ?? null;
+    const latestAttempt = latestEvidence?.attempts?.at(-1) ?? null;
+    if (latestAttempt?.deterministicResult?.correct === false) {
+      const alternative = otherCapability(capabilities, latestEvidence?.invocation?.componentId) ?? pickPreferredCapability(student, capabilities);
       return {
         guidance: {
           text: "Your work is saved. That attempt suggests a different kind of practice may help, so I have one short next activity ready for you."

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { listAvailableCapabilities } from "../capabilities/registry.mjs";
 import { runOrchestration } from "../orchestrator/index.mjs";
 import { commitActionProposal, eligibleCapabilitiesForTask } from "./action-gate.mjs";
+import { buildRecentComponentEvidence } from "../evidence/component-evidence.mjs";
 
 const ACTIVE_RUNTIME_STATUSES = new Set(["READY", "LOADING", "RUNNING"]);
 
@@ -13,9 +14,6 @@ function findStudent(state, studentId) {
   return state.students.find((student) => student.id === studentId) ?? null;
 }
 
-function latestBy(items, field) {
-  return [...items].sort((a, b) => String(b[field] ?? "").localeCompare(String(a[field] ?? "")))[0] ?? null;
-}
 
 export async function executeLearnerTurn(state, { taskId, trigger, userMessage = "" }) {
   const task = findTask(state, taskId);
@@ -47,17 +45,21 @@ export async function executeLearnerTurn(state, { taskId, trigger, userMessage =
     .slice(-12)
     .map(({ role, content }) => ({ role, content }));
 
-  const latestAttempt = latestBy(
-    state.attempts.filter((attempt) => attempt.taskId === task.id),
-    "submittedAt"
-  );
+  const recentComponentEvidence = buildRecentComponentEvidence(state, {
+    taskId: task.id,
+    limit: 3
+  });
 
   const currentRuntime = task.currentRuntimeSessionId
     ? state.runtimeSessions.find((session) => session.id === task.currentRuntimeSessionId) ?? null
     : null;
 
-  const recentRuntimeEvents = currentRuntime
-    ? state.learningEvents.filter((event) => event.runtimeSessionId === currentRuntime.id).slice(-8)
+  const activeRuntime = currentRuntime && ACTIVE_RUNTIME_STATUSES.has(currentRuntime.status)
+    ? currentRuntime
+    : null;
+
+  const recentRuntimeEvents = activeRuntime
+    ? state.learningEvents.filter((event) => event.runtimeSessionId === activeRuntime.id).slice(-8)
     : [];
 
   const eligibleCapabilities = eligibleCapabilitiesForTask(task, listAvailableCapabilities());
@@ -67,14 +69,14 @@ export async function executeLearnerTurn(state, { taskId, trigger, userMessage =
     task,
     userMessage: trimmedMessage,
     conversation,
-    latestAttempt,
-    activeRuntime: currentRuntime
+    componentEvidence: recentComponentEvidence,
+    activeRuntime: activeRuntime
       ? {
-          id: currentRuntime.id,
-          capabilityId: currentRuntime.capabilityId,
-          capabilityVersion: currentRuntime.capabilityVersion,
-          status: currentRuntime.status,
-          stateSnapshot: currentRuntime.stateSnapshot,
+          id: activeRuntime.id,
+          capabilityId: activeRuntime.capabilityId,
+          capabilityVersion: activeRuntime.capabilityVersion,
+          status: activeRuntime.status,
+          stateSnapshot: activeRuntime.stateSnapshot,
           recentEvents: recentRuntimeEvents
         }
       : null,
@@ -89,6 +91,13 @@ export async function executeLearnerTurn(state, { taskId, trigger, userMessage =
     trigger,
     proposal,
     committedAction,
+    evidenceRefs: recentComponentEvidence.map((packet) => ({
+      runtimeSessionId: packet.invocation.runtimeSessionId,
+      componentId: packet.invocation.componentId,
+      componentVersion: packet.invocation.componentVersion,
+      eventIds: packet.provenance.includedEventIds,
+      attemptIds: packet.provenance.attemptIds
+    })),
     createdAt: new Date().toISOString()
   };
   state.orchestrationDecisions.push(decision);
